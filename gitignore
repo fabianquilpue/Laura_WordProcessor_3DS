@@ -1,0 +1,24 @@
+
+# Directorios de compilacion
+build/
+
+# Ejecutables y archivos generados
+*.3dsx
+*.elf
+*.smdh
+*.cia
+*.3ds
+
+# Archivos intermedios
+*.o
+*.d
+*.map
+*.lst
+
+# Archivos del sistema
+.DS_Store
+Thumbs.db
+
+# Configuraciones locales
+.vscode/
+.idea/
