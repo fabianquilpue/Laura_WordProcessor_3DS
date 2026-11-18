@@ -642,11 +642,7 @@ void Editor_Run()
         if (pressedKeys & KEY_DOWN)
             moveCursorVertical(1);
 
-        drawEditor();
-
-        gfxFlushBuffers();
-        gfxSwapBuffers();
-        gspWaitForVBlank();
+                drawEditor();
     }
 }
 
