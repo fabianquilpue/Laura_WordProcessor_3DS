@@ -28,8 +28,14 @@ jobs:
         run: |
           echo "DEVKITPRO=$DEVKITPRO"
           echo "DEVKITARM=$DEVKITARM"
+
           test -f "$DEVKITARM/3ds_rules"
-          arm-none-eabi-g++ --version
+          test -x "$DEVKITARM/bin/arm-none-eabi-g++"
+          test -x "$DEVKITARM/bin/arm-none-eabi-gcc"
+
+          "$DEVKITARM/bin/arm-none-eabi-g++" --version
+          "$DEVKITARM/bin/arm-none-eabi-gcc" --version
+
           make --version
 
       - name: Comprobar estructura del proyecto
@@ -39,22 +45,21 @@ jobs:
           test -f assets/icon.png
           test -f assets/splash.png
           test -d romfs
+
           echo "Estructura del proyecto correcta."
 
-      - name: Comprobar objetivos de compilacion
-        run: |
-          make -qp | grep -q '^all:'
-          echo "Objetivo all encontrado."
-
       - name: Compilar Laura
-        run: make -j2
+        run: |
+          export PATH="$DEVKITARM/bin:$DEVKITPRO/tools/bin:$PATH"
+          make -j2
 
       - name: Comprobar archivos compilados
         run: |
           test -f Laura.3dsx
           test -f Laura.smdh
           test -f Laura.elf
-          echo "Los archivos de Laura fueron generados."
+
+          echo "Los tres archivos fueron generados correctamente."
 
       - name: Publicar archivos compilados
         uses: actions/upload-artifact@v4
