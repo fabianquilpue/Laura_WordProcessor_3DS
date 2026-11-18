@@ -64,7 +64,7 @@ ASFLAGS := -g $(ARCH) $(INCLUDE)
 LDFLAGS = -specs=3dsx.specs -g $(ARCH) \
           -Wl,-Map,$(notdir $*.map)
 
-LIBS := -lctru -lm
+LIBS := -lcitro2d -lcitro3d -lctru -lm
 
 # --------------------------------------------------
 # Primera fase: preparacion
@@ -160,7 +160,9 @@ endif
 
 .PHONY: all clean
 
-all: $(BUILD) $(GFXBUILD) $(DEPSDIR) $(ROMFS_T3XFILES) $(T3XHFILES)
+all: $(BUILD) $(GFXBUILD) $(DEPSDIR) \
+     $(ROMFS)/splash.t3x \
+     $(ROMFS_T3XFILES) $(T3XHFILES)
 	@$(MAKE) --no-print-directory -C $(BUILD) -f $(CURDIR)/Makefile
 
 $(BUILD):
@@ -177,20 +179,33 @@ $(DEPSDIR):
 endif
 
 # --------------------------------------------------
+# Conversion del splash original
+# --------------------------------------------------
+
+$(ROMFS)/splash.t3x: assets/splash.png
+	@echo "Convirtiendo splash original a formato T3X..."
+	@mkdir -p $(ROMFS)
+	@tex3ds -o $@ $<
+
+# --------------------------------------------------
 # Limpiar
 # --------------------------------------------------
 
 clean:
 	@echo "Limpiando compilacion..."
-	@rm -fr $(BUILD) $(TARGET).3dsx $(TARGET).smdh $(TARGET).elf $(GFXBUILD)
+	@rm -fr $(BUILD) $(TARGET).3dsx \
+	        $(TARGET).smdh $(TARGET).elf \
+	        $(ROMFS)/splash.t3x
 
 # --------------------------------------------------
-# Conversion de graficos
+# Conversion de graficos adicionales
 # --------------------------------------------------
 
 $(GFXBUILD)/%.t3x $(BUILD)/%.h: %.t3s
 	@echo "Convirtiendo recurso grafico: $(notdir $<)"
-	@tex3ds -i $< -H $(BUILD)/$*.h -d $(DEPSDIR)/$*.d -o $(GFXBUILD)/$*.t3x
+	@tex3ds -i $< -H $(BUILD)/$*.h \
+	        -d $(DEPSDIR)/$*.d \
+	        -o $(GFXBUILD)/$*.t3x
 
 # --------------------------------------------------
 # Segunda fase: compilacion
