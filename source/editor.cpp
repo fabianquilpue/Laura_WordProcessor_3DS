@@ -86,6 +86,31 @@ namespace
     bool capsLock = false;
     std::string pendingDeadKey;
 
+    // Selección de texto.
+    bool hasSelection = false;
+    std::size_t selectionAnchor = 0;
+
+    // Portapapeles interno de Laura.
+    std::string clipboard;
+
+    // Historial de deshacer y rehacer.
+    struct EditorSnapshot
+    {
+        std::string document;
+        std::size_t cursor;
+        std::size_t anchor;
+        bool selection;
+    };
+
+    std::vector<EditorSnapshot> undoHistory;
+    std::vector<EditorSnapshot> redoHistory;
+
+    constexpr std::size_t MAX_HISTORY = 100;
+
+    u64 nextPhysicalRepeat = 0;
+    constexpr u64 PHYSICAL_REPEAT_DELAY = 350;
+    constexpr u64 PHYSICAL_REPEAT_INTERVAL = 65;
+
     u64 lastLPress = 0;
     u64 nextRepeatTime = 0;
     int activeTouchKey = -1;
