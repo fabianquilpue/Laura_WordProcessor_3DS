@@ -1198,22 +1198,31 @@ namespace
     }
 
     void drawBottomScreen(bool shift, bool altGr)
-    {
-        drawToolbar();
-        drawWordPreview();
-        drawKeyboard(shift, altGr);
+{
+    drawToolbar();
+    drawWordPreview();
+    drawKeyboard(shift, altGr);
 
-        if (capsLock)
-        {
-            drawText(
-                "MAY",
-                283.0f,
-                34.0f,
-                0.30f,
-                COLOR_MUSGO
-            );
-        }
+    if (capsLock)
+    {
+        drawText(
+            "MAY",
+            283.0f,
+            34.0f,
+            0.30f,
+            COLOR_MUSGO
+        );
     }
+
+    // MARCADOR TEMPORAL DE DIAGNOSTICO
+    drawText(
+        "EDITOR NUEVO ACTIVO",
+        75.0f,
+        222.0f,
+        0.35f,
+        COLOR_MUSGO
+    );
+}
 
     void drawEditor(bool shift, bool altGr)
     {
