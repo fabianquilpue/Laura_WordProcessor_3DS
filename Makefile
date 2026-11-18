@@ -24,7 +24,7 @@ GFXBUILD := $(BUILD)
 ROMFS := romfs
 
 # --------------------------------------------------
-# Metadatos de Laura
+# Metadatos
 # --------------------------------------------------
 
 APP_TITLE := Laura
@@ -34,6 +34,18 @@ APP_AUTHOR := Laura Dev / Fabian Contreras
 ICON := assets/icon.png
 
 # --------------------------------------------------
+# Rutas de libctru
+# --------------------------------------------------
+
+CTRULIB ?= $(DEVKITPRO)/libctru
+
+LIBDIRS := $(CTRULIB)
+
+export INCLUDE := -I$(TOPDIR)/include \
+                  -I$(CTRULIB)/include \
+                  -I$(TOPDIR)/$(BUILD)
+
+# --------------------------------------------------
 # Arquitectura Nintendo 3DS
 # --------------------------------------------------
 
@@ -41,10 +53,21 @@ ARCH := -march=armv6k -mtune=mpcore -mfloat-abi=hard -mtp=soft
 
 CFLAGS := -g -Wall -Wextra -O2 -mword-relocations \
           -ffunction-sections -fdata-sections \
-          $(ARCH)
+          $(ARCH) \
+          $(INCLUDE) \
+          -D__3DS__
+
+CXXFLAGS := $(CFLAGS) -fno-rtti -fno-exceptions -std=gnu++17
+
+ASFLAGS := -g $(ARCH) $(INCLUDE)
+
+LDFLAGS = -specs=3dsx.specs -g $(ARCH) \
+          -Wl,-Map,$(notdir $*.map)
+
+LIBS := -lctru -lm
 
 # --------------------------------------------------
-# Primera fase: preparar la compilacion
+# Primera fase: preparacion
 # --------------------------------------------------
 
 ifneq ($(BUILD),$(notdir $(CURDIR)))
@@ -68,11 +91,19 @@ SHLISTFILES := $(foreach dir,$(SOURCES),$(notdir $(wildcard $(dir)/*.shlist)))
 GFXFILES := $(foreach dir,$(GRAPHICS),$(notdir $(wildcard $(dir)/*.t3s)))
 BINFILES := $(foreach dir,$(DATA),$(notdir $(wildcard $(dir)/*.*)))
 
+# --------------------------------------------------
+# Seleccion del enlazador
+# --------------------------------------------------
+
 ifeq ($(strip $(CPPFILES)),)
 export LD := $(CC)
 else
 export LD := $(CXX)
 endif
+
+# --------------------------------------------------
+# Recursos graficos
+# --------------------------------------------------
 
 ifeq ($(GFXBUILD),$(BUILD))
 export T3XFILES := $(GFXFILES:.t3s=.t3x)
@@ -80,6 +111,10 @@ else
 export ROMFS_T3XFILES := $(patsubst %.t3s,$(GFXBUILD)/%.t3x,$(GFXFILES))
 export T3XHFILES := $(patsubst %.t3s,$(BUILD)/%.h,$(GFXFILES))
 endif
+
+# --------------------------------------------------
+# Archivos objeto
+# --------------------------------------------------
 
 export OFILES_SOURCES := $(CPPFILES:.cpp=.o) \
                          $(CFILES:.c=.o) \
@@ -97,32 +132,14 @@ export HFILES := $(PICAFILES:.v.pica=_shbin.h) \
                  $(addsuffix .h,$(subst .,_,$(BINFILES))) \
                  $(GFXFILES:.t3s=.h)
 
-# Rutas de cabeceras y bibliotecas
-
-export INCLUDE := $(foreach dir,$(INCLUDES),-I$(CURDIR)/$(dir)) \
-                  $(foreach dir,$(LIBDIRS),-I$(dir)/include) \
-                  -I$(CURDIR)/$(BUILD)
+# --------------------------------------------------
+# Bibliotecas
+# --------------------------------------------------
 
 export LIBPATHS := $(foreach dir,$(LIBDIRS),-L$(dir)/lib)
 
 # --------------------------------------------------
-# Configuracion de compilacion C y C++
-# --------------------------------------------------
-
-CFLAGS += $(INCLUDE) -D__3DS__
-
-CXXFLAGS := $(CFLAGS) -fno-rtti -fno-exceptions -std=gnu++17
-
-ASFLAGS := -g $(ARCH)
-
-LDFLAGS = -specs=3dsx.specs -g $(ARCH) \
-          -Wl,-Map,$(notdir $*.map)
-
-LIBS := -lctru -lm
-LIBDIRS := $(CTRULIB)
-
-# --------------------------------------------------
-# Metadatos SMDH y RomFS
+# Configuracion SMDH
 # --------------------------------------------------
 
 export _3DSXDEPS := $(if $(NO_SMDH),,$(OUTPUT).smdh)
@@ -160,7 +177,7 @@ $(DEPSDIR):
 endif
 
 # --------------------------------------------------
-# Limpieza
+# Limpiar
 # --------------------------------------------------
 
 clean:
@@ -168,7 +185,7 @@ clean:
 	@rm -fr $(BUILD) $(TARGET).3dsx $(TARGET).smdh $(TARGET).elf $(GFXBUILD)
 
 # --------------------------------------------------
-# Conversion de recursos graficos
+# Conversion de graficos
 # --------------------------------------------------
 
 $(GFXBUILD)/%.t3x $(BUILD)/%.h: %.t3s
@@ -176,7 +193,7 @@ $(GFXBUILD)/%.t3x $(BUILD)/%.h: %.t3s
 	@tex3ds -i $< -H $(BUILD)/$*.h -d $(DEPSDIR)/$*.d -o $(GFXBUILD)/$*.t3x
 
 # --------------------------------------------------
-# Segunda fase: generar ejecutables
+# Segunda fase: compilacion
 # --------------------------------------------------
 
 else
