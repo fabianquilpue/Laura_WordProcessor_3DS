@@ -40,19 +40,8 @@ ICON := assets/icon.png
 ARCH := -march=armv6k -mtune=mpcore -mfloat-abi=hard -mtp=soft
 
 CFLAGS := -g -Wall -Wextra -O2 -mword-relocations \
-          -ffunction-sections \
-          $(ARCH) \
-          -D__3DS__
-
-CXXFLAGS := $(CFLAGS) -fno-rtti -fno-exceptions -std=gnu++17
-
-ASFLAGS := -g $(ARCH)
-
-LDFLAGS = -specs=3dsx.specs -g $(ARCH) \
-          -Wl,-Map,$(notdir $*.map)
-
-LIBS := -lctru -lm
-LIBDIRS := $(CTRULIB)
+          -ffunction-sections -fdata-sections \
+          $(ARCH)
 
 # --------------------------------------------------
 # Primera fase: preparar la compilacion
@@ -79,15 +68,11 @@ SHLISTFILES := $(foreach dir,$(SOURCES),$(notdir $(wildcard $(dir)/*.shlist)))
 GFXFILES := $(foreach dir,$(GRAPHICS),$(notdir $(wildcard $(dir)/*.t3s)))
 BINFILES := $(foreach dir,$(DATA),$(notdir $(wildcard $(dir)/*.*)))
 
-# Seleccionar el enlazador segun el tipo de proyecto
-
 ifeq ($(strip $(CPPFILES)),)
 export LD := $(CC)
 else
 export LD := $(CXX)
 endif
-
-# Archivos graficos
 
 ifeq ($(GFXBUILD),$(BUILD))
 export T3XFILES := $(GFXFILES:.t3s=.t3x)
@@ -95,8 +80,6 @@ else
 export ROMFS_T3XFILES := $(patsubst %.t3s,$(GFXBUILD)/%.t3x,$(GFXFILES))
 export T3XHFILES := $(patsubst %.t3s,$(BUILD)/%.h,$(GFXFILES))
 endif
-
-# Archivos objeto
 
 export OFILES_SOURCES := $(CPPFILES:.cpp=.o) \
                          $(CFILES:.c=.o) \
@@ -114,7 +97,7 @@ export HFILES := $(PICAFILES:.v.pica=_shbin.h) \
                  $(addsuffix .h,$(subst .,_,$(BINFILES))) \
                  $(GFXFILES:.t3s=.h)
 
-# Rutas de inclusion y bibliotecas
+# Rutas de cabeceras y bibliotecas
 
 export INCLUDE := $(foreach dir,$(INCLUDES),-I$(CURDIR)/$(dir)) \
                   $(foreach dir,$(LIBDIRS),-I$(dir)/include) \
@@ -122,7 +105,25 @@ export INCLUDE := $(foreach dir,$(INCLUDES),-I$(CURDIR)/$(dir)) \
 
 export LIBPATHS := $(foreach dir,$(LIBDIRS),-L$(dir)/lib)
 
-# Icono y metadatos SMDH
+# --------------------------------------------------
+# Configuracion de compilacion C y C++
+# --------------------------------------------------
+
+CFLAGS += $(INCLUDE) -D__3DS__
+
+CXXFLAGS := $(CFLAGS) -fno-rtti -fno-exceptions -std=gnu++17
+
+ASFLAGS := -g $(ARCH)
+
+LDFLAGS = -specs=3dsx.specs -g $(ARCH) \
+          -Wl,-Map,$(notdir $*.map)
+
+LIBS := -lctru -lm
+LIBDIRS := $(CTRULIB)
+
+# --------------------------------------------------
+# Metadatos SMDH y RomFS
+# --------------------------------------------------
 
 export _3DSXDEPS := $(if $(NO_SMDH),,$(OUTPUT).smdh)
 
@@ -131,8 +132,6 @@ export APP_ICON := $(TOPDIR)/$(ICON)
 ifeq ($(strip $(NO_SMDH)),)
 export _3DSXFLAGS += --smdh=$(CURDIR)/$(TARGET).smdh
 endif
-
-# Incorporar RomFS
 
 ifneq ($(ROMFS),)
 export _3DSXFLAGS += --romfs=$(CURDIR)/$(ROMFS)
@@ -161,7 +160,7 @@ $(DEPSDIR):
 endif
 
 # --------------------------------------------------
-# Limpiar archivos generados
+# Limpieza
 # --------------------------------------------------
 
 clean:
@@ -187,8 +186,6 @@ $(OUTPUT).3dsx: $(OUTPUT).elf $(_3DSXDEPS)
 $(OFILES_SOURCES): $(HFILES)
 
 $(OUTPUT).elf: $(OFILES)
-
-# Conversion de archivos binarios
 
 %.bin.o %_bin.h: %.bin
 	@echo "Convirtiendo archivo: $(notdir $<)"
