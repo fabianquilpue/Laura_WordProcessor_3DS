@@ -29,22 +29,14 @@ jobs:
           echo "DEVKITPRO=$DEVKITPRO"
           echo "DEVKITARM=$DEVKITARM"
 
-          echo "Comprobando compilador..."
-          test -x "$DEVKITARM/bin/arm-none-eabi-g++"
-          "$DEVKITARM/bin/arm-none-eabi-g++" --version
-
-          echo "Comprobando reglas..."
           test -f "$DEVKITARM/3ds_rules"
-
-          echo "Comprobando libctru..."
+          test -x "$DEVKITARM/bin/arm-none-eabi-g++"
           test -f "$DEVKITPRO/libctru/include/3ds.h"
 
-          echo "Cabecera encontrada:"
-          ls -l "$DEVKITPRO/libctru/include/3ds.h"
+          "$DEVKITARM/bin/arm-none-eabi-g++" --version
+          make --version
 
-          echo "Entorno devkitPro correcto."
-
-      - name: Comprobar estructura del proyecto
+      - name: Comprobar estructura
         run: |
           test -f Makefile
           test -f source/main.cpp
@@ -52,22 +44,46 @@ jobs:
           test -f assets/splash.png
           test -d romfs
 
-          echo "Estructura del proyecto correcta."
-
-      - name: Diagnosticar rutas de compilacion
+      - name: Diagnosticar hidKeysDown
         run: |
-          echo "Ruta de libctru:"
-          ls -ld "$DEVKITPRO/libctru"
-          ls -ld "$DEVKITPRO/libctru/include"
+          export PATH="$DEVKITARM/bin:$DEVKITPRO/tools/bin:$PATH"
 
-          echo "Comprobando cabecera:"
-          test -f "$DEVKITPRO/libctru/include/3ds.h"
+          echo "======================================"
+          echo "1. Buscando macros hidKeysDown"
+          echo "======================================"
+
+          printf '#include <3ds.h>\n' | \
+            arm-none-eabi-g++ \
+              -x c++ \
+              -std=gnu++17 \
+              -D__3DS__ \
+              -I"$DEVKITPRO/libctru/include" \
+              -dM -E - | grep -n 'hidKeysDown' || true
+
+          echo "======================================"
+          echo "2. Preprocesando main.cpp"
+          echo "======================================"
+
+          arm-none-eabi-g++ \
+            -std=gnu++17 \
+            -D__3DS__ \
+            -I"$DEVKITPRO/libctru/include" \
+            -Iinclude \
+            -E source/main.cpp \
+            -o /tmp/laura_preprocessed.cpp
+
+          echo "======================================"
+          echo "3. Buscando declaraciones y llamadas"
+          echo "======================================"
+
+          grep -n -C 3 'hidKeysDown' \
+            /tmp/laura_preprocessed.cpp || true
 
       - name: Compilar Laura
         run: |
           export PATH="$DEVKITARM/bin:$DEVKITPRO/tools/bin:$PATH"
           make clean
-          make -j2
+          make V=1 -j1
 
       - name: Comprobar archivos compilados
         run: |
