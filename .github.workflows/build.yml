@@ -13,29 +13,46 @@ on:
 
 jobs:
   build:
-    name: Compilacion Nintendo 3DS
+    name: Compilar Laura
 
     runs-on: ubuntu-latest
 
     container:
       image: devkitpro/devkitarm:latest
-      options: --user 1001
 
     steps:
       - name: Descargar repositorio
         uses: actions/checkout@v4
 
-      - name: Comprobar estructura
+      - name: Verificar archivos del proyecto
         run: |
+          echo "Comprobando estructura..."
           test -f Makefile
           test -f source/main.cpp
           test -f assets/icon.png
+          test -f assets/splash.png
           test -d romfs
+          echo "Estructura correcta."
+
+      - name: Comprobar entorno devkitPro
+        run: |
+          echo "DEVKITPRO=$DEVKITPRO"
+          echo "DEVKITARM=$DEVKITARM"
+          test -f "$DEVKITARM/3ds_rules"
+          arm-none-eabi-g++ --version
+          make --version
 
       - name: Compilar Laura
-        run: make -j$(nproc --all)
+        run: make -j2
 
-      - name: Publicar archivos compilados
+      - name: Comprobar ejecutables
+        run: |
+          test -f Laura.3dsx
+          test -f Laura.smdh
+          test -f Laura.elf
+          echo "Los tres archivos fueron generados."
+
+      - name: Publicar compilacion
         uses: actions/upload-artifact@v4
         with:
           name: Laura-Nintendo-3DS
