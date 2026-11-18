@@ -31,11 +31,11 @@ jobs:
 
           test -f "$DEVKITARM/3ds_rules"
           test -x "$DEVKITARM/bin/arm-none-eabi-g++"
-          test -x "$DEVKITARM/bin/arm-none-eabi-gcc"
+          test -f "$DEVKITPRO/libctru/include/3ds.h"
+
+          echo "Cabecera principal de libctru encontrada."
 
           "$DEVKITARM/bin/arm-none-eabi-g++" --version
-          "$DEVKITARM/bin/arm-none-eabi-gcc" --version
-
           make --version
 
       - name: Comprobar estructura del proyecto
