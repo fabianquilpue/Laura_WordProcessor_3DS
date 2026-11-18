@@ -1,6 +1,7 @@
-
 #include <3ds.h>
 #include <citro2d.h>
+
+#include "editor.hpp"
 
 #include <cmath>
 #include <cstdint>
@@ -34,9 +35,6 @@ namespace
     C2D_Text englishText;
     C2D_Text instructionLine1;
     C2D_Text instructionLine2;
-
-    C2D_Text editorText;
-    C2D_Text editorMessage;
 
     u32 interpolateColor(
         u8 r1, u8 g1, u8 b1,
@@ -126,7 +124,6 @@ namespace
         if (originalWidth <= 0.0f || originalHeight <= 0.0f)
             return;
 
-        // Escalado proporcional: nunca se deforma el original.
         constexpr float MAX_LOGO_WIDTH = 260.0f;
         constexpr float MAX_LOGO_HEIGHT = 78.0f;
 
@@ -136,8 +133,6 @@ namespace
             scale = MAX_LOGO_HEIGHT / originalHeight;
 
         const float width = originalWidth * scale;
-        const float height = originalHeight * scale;
-
         const float x = (TOP_WIDTH - width) / 2.0f;
         const float y = 28.0f;
 
@@ -161,7 +156,6 @@ namespace
         const float wave =
             (std::sin(breathPhase * 6.28318530718f) + 1.0f) / 2.0f;
 
-        // El texto llega casi a confundirse con el fondo.
         const float breathIntensity =
             0.025f + wave * 0.975f;
 
@@ -173,16 +167,11 @@ namespace
 
         C3D_FrameBegin(C3D_FRAME_SYNCDRAW);
 
-        // ----------------------------------
-        // Pantalla superior
-        // ----------------------------------
-
         C2D_TargetClear(topScreen, COLOR_CREMA);
         C2D_SceneBegin(topScreen);
 
         drawLogo();
 
-        // El título siempre queda debajo del logotipo.
         drawCenteredText(
             &titleText,
             TOP_WIDTH,
@@ -206,10 +195,6 @@ namespace
             0.38f,
             COLOR_CARBON
         );
-
-        // ----------------------------------
-        // Pantalla inferior
-        // ----------------------------------
 
         C2D_TargetClear(bottomScreen, COLOR_CREMA);
         C2D_SceneBegin(bottomScreen);
@@ -239,6 +224,7 @@ namespace
 
         C2D_TargetClear(topScreen, COLOR_CREMA);
         C2D_SceneBegin(topScreen);
+
         drawLogo();
 
         drawCenteredText(
@@ -313,7 +299,6 @@ namespace
             if (!leaving)
             {
                 const u64 elapsed = osGetTime() - startTime;
-
                 drawWelcome(elapsed);
             }
             else
@@ -338,44 +323,6 @@ namespace
             }
         }
     }
-
-    // Pantalla provisional hasta implementar el editor.
-    void runEditorPlaceholder()
-    {
-        while (aptMainLoop())
-        {
-            hidScanInput();
-
-            if (hidKeysDown() & KEY_START)
-                break;
-
-            C3D_FrameBegin(C3D_FRAME_SYNCDRAW);
-
-            C2D_TargetClear(topScreen, COLOR_CREMA);
-            C2D_SceneBegin(topScreen);
-
-            drawCenteredText(
-                &editorText,
-                TOP_WIDTH,
-                105.0f,
-                0.85f,
-                COLOR_CARBON
-            );
-
-            C2D_TargetClear(bottomScreen, COLOR_CREMA);
-            C2D_SceneBegin(bottomScreen);
-
-            drawCenteredText(
-                &editorMessage,
-                BOTTOM_WIDTH,
-                105.0f,
-                0.42f,
-                COLOR_MUSGO
-            );
-
-            C3D_FrameEnd(0);
-        }
-    }
 }
 
 int main(int argc, char* argv[])
@@ -396,11 +343,22 @@ int main(int argc, char* argv[])
 
     textBuffer = C2D_TextBufNew(512);
 
+    if (textBuffer == nullptr)
+    {
+        C2D_Fini();
+        C3D_Fini();
+        gfxExit();
+        romfsExit();
+        return 1;
+    }
+
     prepareText(&titleText, "Laura v1.0");
+
     prepareText(
         &spanishText,
         "Procesador de texto minimalista para Nintendo 3DS"
     );
+
     prepareText(
         &englishText,
         "Minimalist word processor for the Nintendo 3DS"
@@ -410,32 +368,27 @@ int main(int argc, char* argv[])
         &instructionLine1,
         "Toca la pantalla o presiona"
     );
+
     prepareText(
         &instructionLine2,
         "cualquier boton para continuar."
-    );
-
-    prepareText(&editorText, "Laura");
-    prepareText(
-        &editorMessage,
-        "Editor en desarrollo"
     );
 
     splashSheet = C2D_SpriteSheetLoad(
         "romfs:/splash.t3x"
     );
 
-    if (splashSheet != nullptr)
+    if (splashSheet != nullptr && Editor_Init())
     {
         runWelcome();
-        runEditorPlaceholder();
+        Editor_Run();
+        Editor_Fini();
     }
 
     if (splashSheet != nullptr)
         C2D_SpriteSheetFree(splashSheet);
 
-    if (textBuffer != nullptr)
-        C2D_TextBufDelete(textBuffer);
+    C2D_TextBufDelete(textBuffer);
 
     C2D_Fini();
     C3D_Fini();
