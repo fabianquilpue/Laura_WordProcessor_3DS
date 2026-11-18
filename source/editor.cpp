@@ -1,10 +1,13 @@
+
 #include "editor.hpp"
 
 #include <3ds.h>
 #include <citro2d.h>
 
 #include <algorithm>
+#include <array>
 #include <cstddef>
+#include <cstdint>
 #include <string>
 #include <vector>
 
@@ -12,6 +15,7 @@ namespace
 {
     constexpr float SCREEN_WIDTH = 400.0f;
     constexpr float SCREEN_HEIGHT = 240.0f;
+    constexpr float BOTTOM_WIDTH = 320.0f;
 
     constexpr float PAGE_X = 24.0f;
     constexpr float PAGE_Y = 12.0f;
@@ -26,7 +30,17 @@ namespace
     constexpr int MAX_LINE_CHARACTERS = 43;
     constexpr int VISIBLE_LINES = 15;
 
+    constexpr float KEY_MARGIN = 5.0f;
+    constexpr float KEY_GAP = 1.0f;
+    constexpr float KEY_WIDTH = 30.0f;
+    constexpr float KEY_HEIGHT = 25.0f;
+    constexpr float KEY_START_Y = 53.0f;
+    constexpr float KEY_ROW_STEP = 27.0f;
+
     constexpr u64 CURSOR_BLINK_INTERVAL = 500;
+    constexpr u64 CAPS_DOUBLE_PRESS_MS = 350;
+    constexpr u64 KEY_REPEAT_DELAY = 350;
+    constexpr u64 KEY_REPEAT_INTERVAL = 65;
 
     constexpr u32 COLOR_CREMA =
         C2D_Color32(247, 245, 238, 255);
@@ -43,6 +57,18 @@ namespace
     constexpr u32 COLOR_BORDE =
         C2D_Color32(220, 218, 208, 255);
 
+    constexpr u32 COLOR_TECLA_BORDE =
+        C2D_Color32(38, 38, 35, 255);
+
+    constexpr u32 COLOR_TECLA =
+        C2D_Color32(248, 247, 241, 255);
+
+    constexpr u32 COLOR_TECLA_SUPERIOR =
+        C2D_Color32(255, 255, 252, 255);
+
+    constexpr u32 COLOR_TECLA_ACTIVA =
+        C2D_Color32(220, 231, 222, 255);
+
     constexpr u32 COLOR_SECUNDARIO =
         C2D_Color32(130, 130, 120, 255);
 
@@ -55,14 +81,102 @@ namespace
     std::size_t cursorPosition = 0;
     std::size_t firstVisibleLine = 0;
 
-    struct VisualLine
+    std::vector<std::pair<std::size_t, std::size_t>> visualLines;
+
+    bool capsLock = false;
+    std::string pendingDeadKey;
+
+    u64 lastLPress = 0;
+    u64 nextRepeatTime = 0;
+    int activeTouchKey = -1;
+
+    struct KeyDefinition
     {
-        std::size_t start;
-        std::size_t end;
-        std::string text;
+        const char* base;
+        const char* shift;
+        const char* altGr;
+        bool letter;
     };
 
-    std::vector<VisualLine> visualLines;
+    struct KeyRect
+    {
+        float x;
+        float y;
+        float width;
+        float height;
+    };
+
+    const std::array<std::array<KeyDefinition, 10>, 5> keyboard = {{
+        // Fila 1: números.
+        {{
+            {"1", "|", "@", false},
+            {"2", "*", "#", false},
+            {"3", "·", "ª", false},
+            {"4", "$", "+", false},
+            {"5", "%", "¬", false},
+            {"6", "&", "", false},
+            {"7", "/", "º", false},
+            {"8", "(", "<", false},
+            {"9", ")", ">", false},
+            {"0", "=", "^", false}
+        }},
+
+        // Fila 2: QWERTY superior.
+        {{
+            {"q", "Q", "", true},
+            {"w", "W", "", true},
+            {"e", "E", "€", true},
+            {"r", "R", "", true},
+            {"t", "T", "", true},
+            {"y", "Y", "", true},
+            {"u", "U", "", true},
+            {"i", "I", "", true},
+            {"o", "O", "", true},
+            {"p", "P", "", true}
+        }},
+
+        // Fila 3: QWERTY central.
+        {{
+            {"a", "A", "", true},
+            {"s", "S", "", true},
+            {"d", "D", "", true},
+            {"f", "F", "", true},
+            {"g", "G", "", true},
+            {"h", "H", "", true},
+            {"j", "J", "", true},
+            {"k", "K", "", true},
+            {"l", "L", "", true},
+            {"ñ", "Ñ", "~", true}
+        }},
+
+        // Fila 4: QWERTY inferior.
+        {{
+            {"z", "Z", "", true},
+            {"x", "X", "", true},
+            {"c", "C", "ç", true},
+            {"v", "V", "", true},
+            {"b", "B", "", true},
+            {"n", "N", "", true},
+            {"m", "M", "", true},
+            {",", ",", ",", false},
+            {".", ".", ".", false},
+            {"´", "¨", "`", false}
+        }},
+
+        // Fila 5: puntuación.
+        {{
+            {"«", "«", "«", false},
+            {"¿", "¿", "¿", false},
+            {"¡", "¡", "¡", false},
+            {"(", "[", "{", false},
+            {"-", "–", "–", false},
+            {"‘", "“", "“", false},
+            {")", "]", "}", false},
+            {"?", "?", "?", false},
+            {"!", "!", "!", false},
+            {"»", "»", "»", false}
+        }}
+    }};
 
     std::size_t nextUTF8(
         const std::string& text,
@@ -116,21 +230,6 @@ namespace
         return count;
     }
 
-    std::size_t positionAtColumn(
-        const VisualLine& line,
-        std::size_t column)
-    {
-        std::size_t position = line.start;
-
-        while (position < line.end && column > 0)
-        {
-            position = nextUTF8(document, position);
-            --column;
-        }
-
-        return position;
-    }
-
     void buildVisualLines()
     {
         visualLines.clear();
@@ -143,16 +242,11 @@ namespace
         {
             if (document[position] == '\n')
             {
-                visualLines.push_back({
-                    lineStart,
-                    position,
-                    document.substr(lineStart, position - lineStart)
-                });
+                visualLines.push_back({lineStart, position});
 
                 ++position;
                 lineStart = position;
                 characterCount = 0;
-
                 continue;
             }
 
@@ -163,43 +257,27 @@ namespace
                 position < document.size() &&
                 document[position] != '\n')
             {
-                visualLines.push_back({
-                    lineStart,
-                    position,
-                    document.substr(lineStart, position - lineStart)
-                });
-
+                visualLines.push_back({lineStart, position});
                 lineStart = position;
                 characterCount = 0;
             }
         }
 
-        visualLines.push_back({
-            lineStart,
-            document.size(),
-            document.substr(lineStart)
-        });
-
-        if (visualLines.empty())
-        {
-            visualLines.push_back({0, 0, ""});
-        }
+        visualLines.push_back({lineStart, document.size()});
     }
 
     std::size_t findCursorLine()
     {
         for (std::size_t i = 0; i < visualLines.size(); ++i)
         {
-            const VisualLine& line = visualLines[i];
-
-            if (cursorPosition >= line.start &&
-                cursorPosition <= line.end)
+            if (cursorPosition >= visualLines[i].first &&
+                cursorPosition <= visualLines[i].second)
             {
                 return i;
             }
         }
 
-        return visualLines.size() - 1;
+        return visualLines.empty() ? 0 : visualLines.size() - 1;
     }
 
     void updateScroll()
@@ -207,14 +285,10 @@ namespace
         const std::size_t cursorLine = findCursorLine();
 
         if (cursorLine < firstVisibleLine)
-        {
             firstVisibleLine = cursorLine;
-        }
+
         else if (cursorLine >= firstVisibleLine + VISIBLE_LINES)
-        {
-            firstVisibleLine =
-                cursorLine - VISIBLE_LINES + 1;
-        }
+            firstVisibleLine = cursorLine - VISIBLE_LINES + 1;
 
         const std::size_t maximumScroll =
             visualLines.size() > VISIBLE_LINES
@@ -228,59 +302,196 @@ namespace
     void moveCursorHorizontal(int direction)
     {
         if (direction < 0)
-        {
-            cursorPosition =
-                previousUTF8(document, cursorPosition);
-        }
+            cursorPosition = previousUTF8(document, cursorPosition);
+
         else if (direction > 0)
-        {
-            cursorPosition =
-                nextUTF8(document, cursorPosition);
-        }
+            cursorPosition = nextUTF8(document, cursorPosition);
     }
 
     void moveCursorVertical(int direction)
     {
+        if (visualLines.empty())
+            return;
+
         const std::size_t currentLine = findCursorLine();
 
         if (direction < 0 && currentLine == 0)
             return;
 
-        if (direction > 0 &&
-            currentLine + 1 >= visualLines.size())
+        if (direction > 0 && currentLine + 1 >= visualLines.size())
+            return;
+
+        const std::size_t lineStart = visualLines[currentLine].first;
+
+        const std::size_t column =
+            countCharacters(document, lineStart, cursorPosition);
+
+        const std::size_t targetLine =
+            direction < 0 ? currentLine - 1 : currentLine + 1;
+
+        const std::size_t targetStart = visualLines[targetLine].first;
+        const std::size_t targetEnd = visualLines[targetLine].second;
+
+        std::size_t targetPosition = targetStart;
+        std::size_t remaining = column;
+
+        while (targetPosition < targetEnd && remaining > 0)
         {
+            targetPosition = nextUTF8(document, targetPosition);
+            --remaining;
+        }
+
+        cursorPosition = targetPosition;
+    }
+
+    void insertRaw(const std::string& value)
+    {
+        document.insert(cursorPosition, value);
+        cursorPosition += value.size();
+    }
+
+    void insertCharacter(const std::string& value)
+    {
+        if (value.empty())
+            return;
+
+        if (pendingDeadKey.empty())
+        {
+            insertRaw(value);
             return;
         }
 
-        const VisualLine& current =
-            visualLines[currentLine];
+        const std::string dead = pendingDeadKey;
+        pendingDeadKey.clear();
 
-        const std::size_t column =
-            countCharacters(
-                document,
-                current.start,
-                cursorPosition
-            );
+        struct Composition
+        {
+            const char* dead;
+            const char* letter;
+            const char* result;
+        };
 
-        const std::size_t targetLine =
-            direction < 0
-                ? currentLine - 1
-                : currentLine + 1;
+        static const Composition combinations[] = {
+            {"´", "a", "á"}, {"´", "e", "é"},
+            {"´", "i", "í"}, {"´", "o", "ó"},
+            {"´", "u", "ú"}, {"´", "A", "Á"},
+            {"´", "E", "É"}, {"´", "I", "Í"},
+            {"´", "O", "Ó"}, {"´", "U", "Ú"},
 
-        const VisualLine& target =
-            visualLines[targetLine];
+            {"¨", "u", "ü"}, {"¨", "U", "Ü"},
 
-        const std::size_t targetLength =
-            countCharacters(
-                document,
-                target.start,
-                target.end
-            );
+            {"`", "a", "à"}, {"`", "e", "è"},
+            {"`", "i", "ì"}, {"`", "o", "ò"},
+            {"`", "u", "ù"}, {"`", "A", "À"},
+            {"`", "E", "È"}, {"`", "I", "Ì"},
+            {"`", "O", "Ò"}, {"`", "U", "Ù"},
 
-        cursorPosition = positionAtColumn(
-            target,
-            std::min(column, targetLength)
-        );
+            {"^", "a", "â"}, {"^", "e", "ê"},
+            {"^", "i", "î"}, {"^", "o", "ô"},
+            {"^", "u", "û"}, {"^", "A", "Â"},
+            {"^", "E", "Ê"}, {"^", "I", "Î"},
+            {"^", "O", "Ô"}, {"^", "U", "Û"}
+        };
+
+        for (const Composition& item : combinations)
+        {
+            if (dead == item.dead && value == item.letter)
+            {
+                insertRaw(item.result);
+                return;
+            }
+        }
+
+        // Si la combinación no existe, conserva ambos caracteres.
+        insertRaw(dead);
+        insertRaw(value);
+    }
+
+    void activateDeadKey(const std::string& accent)
+    {
+        if (!pendingDeadKey.empty())
+            insertRaw(pendingDeadKey);
+
+        pendingDeadKey = accent;
+    }
+
+    void backspace()
+    {
+        if (!pendingDeadKey.empty())
+        {
+            pendingDeadKey.clear();
+            return;
+        }
+
+        if (cursorPosition == 0)
+            return;
+
+        const std::size_t previous =
+            previousUTF8(document, cursorPosition);
+
+        document.erase(previous, cursorPosition - previous);
+        cursorPosition = previous;
+    }
+
+    void insertTab()
+    {
+        insertCharacter("\t");
+    }
+
+    void increaseIndent()
+    {
+        const std::size_t lineStart =
+            document.rfind('\n', cursorPosition == 0 ? 0 : cursorPosition - 1);
+
+        const std::size_t insertionPosition =
+            lineStart == std::string::npos ? 0 : lineStart + 1;
+
+        document.insert(insertionPosition, "    ");
+
+        if (cursorPosition >= insertionPosition)
+            cursorPosition += 4;
+    }
+
+    std::string getCurrentWord()
+    {
+        std::size_t start = cursorPosition;
+        std::size_t end = cursorPosition;
+
+        while (start > 0)
+        {
+            const std::size_t previous =
+                previousUTF8(document, start);
+
+            const std::string character =
+                document.substr(previous, start - previous);
+
+            if (character == " " || character == "\n" ||
+                character == "\t")
+                break;
+
+            start = previous;
+        }
+
+        while (end < document.size())
+        {
+            const std::size_t next = nextUTF8(document, end);
+
+            const std::string character =
+                document.substr(end, next - end);
+
+            if (character == " " || character == "\n" ||
+                character == "\t")
+                break;
+
+            end = next;
+        }
+
+        std::string word = document.substr(start, end - start);
+
+        if (!pendingDeadKey.empty())
+            word += pendingDeadKey;
+
+        return word;
     }
 
     void drawText(
@@ -292,12 +503,7 @@ namespace
     {
         C2D_Text text;
 
-        C2D_TextParse(
-            &text,
-            textBuffer,
-            content
-        );
-
+        C2D_TextParse(&text, textBuffer, content);
         C2D_TextOptimize(&text);
 
         C2D_DrawText(
@@ -321,12 +527,7 @@ namespace
     {
         C2D_Text text;
 
-        C2D_TextParse(
-            &text,
-            textBuffer,
-            content
-        );
-
+        C2D_TextParse(&text, textBuffer, content);
         C2D_TextOptimize(&text);
 
         float width = 0.0f;
@@ -358,12 +559,7 @@ namespace
 
         C2D_Text text;
 
-        C2D_TextParse(
-            &text,
-            textBuffer,
-            content.c_str()
-        );
-
+        C2D_TextParse(&text, textBuffer, content.c_str());
         C2D_TextOptimize(&text);
 
         float width = 0.0f;
@@ -382,49 +578,29 @@ namespace
     void drawPage()
     {
         C2D_DrawRectSolid(
-            PAGE_X,
-            PAGE_Y,
-            0.5f,
-            PAGE_WIDTH,
-            PAGE_HEIGHT,
+            PAGE_X, PAGE_Y, 0.5f,
+            PAGE_WIDTH, PAGE_HEIGHT,
             COLOR_PAPEL
         );
 
-        // Borde discreto del área de escritura.
         C2D_DrawRectSolid(
-            PAGE_X,
-            PAGE_Y,
-            0.6f,
-            PAGE_WIDTH,
-            1.0f,
-            COLOR_BORDE
+            PAGE_X, PAGE_Y, 0.6f,
+            PAGE_WIDTH, 1.0f, COLOR_BORDE
         );
 
         C2D_DrawRectSolid(
-            PAGE_X,
-            PAGE_Y + PAGE_HEIGHT - 1.0f,
-            0.6f,
-            PAGE_WIDTH,
-            1.0f,
-            COLOR_BORDE
+            PAGE_X, PAGE_Y + PAGE_HEIGHT - 1.0f, 0.6f,
+            PAGE_WIDTH, 1.0f, COLOR_BORDE
         );
 
         C2D_DrawRectSolid(
-            PAGE_X,
-            PAGE_Y,
-            0.6f,
-            1.0f,
-            PAGE_HEIGHT,
-            COLOR_BORDE
+            PAGE_X, PAGE_Y, 0.6f,
+            1.0f, PAGE_HEIGHT, COLOR_BORDE
         );
 
         C2D_DrawRectSolid(
-            PAGE_X + PAGE_WIDTH - 1.0f,
-            PAGE_Y,
-            0.6f,
-            1.0f,
-            PAGE_HEIGHT,
-            COLOR_BORDE
+            PAGE_X + PAGE_WIDTH - 1.0f, PAGE_Y, 0.6f,
+            1.0f, PAGE_HEIGHT, COLOR_BORDE
         );
     }
 
@@ -433,168 +609,453 @@ namespace
         buildVisualLines();
         updateScroll();
 
-        C2D_TextBufClear(textBuffer);
-
         for (int i = 0; i < VISIBLE_LINES; ++i)
         {
-            const std::size_t lineIndex =
-                firstVisibleLine + i;
+            const std::size_t lineIndex = firstVisibleLine + i;
 
             if (lineIndex >= visualLines.size())
                 break;
 
-            const VisualLine& line =
-                visualLines[lineIndex];
+            const std::size_t start = visualLines[lineIndex].first;
+            const std::size_t end = visualLines[lineIndex].second;
 
-            const float y =
-                TEXT_Y + static_cast<float>(i) * LINE_HEIGHT;
+            const std::string line =
+                document.substr(start, end - start);
 
-            if (!line.text.empty())
+            if (!line.empty())
             {
                 drawText(
-                    line.text.c_str(),
+                    line.c_str(),
                     TEXT_X,
-                    y,
+                    TEXT_Y + static_cast<float>(i) * LINE_HEIGHT,
                     TEXT_SCALE,
                     COLOR_CARBON
                 );
             }
         }
 
-        // Cursor vertical parpadeante.
         const std::size_t cursorLine = findCursorLine();
 
         if (cursorLine >= firstVisibleLine &&
             cursorLine < firstVisibleLine + VISIBLE_LINES)
         {
-            const VisualLine& line =
-                visualLines[cursorLine];
+            const std::size_t start = visualLines[cursorLine].first;
 
             const std::string prefix =
-                document.substr(
-                    line.start,
-                    cursorPosition - line.start
-                );
+                document.substr(start, cursorPosition - start);
 
-            const float cursorX =
-                TEXT_X + measureTextWidth(prefix);
+            const float cursorX = TEXT_X + measureTextWidth(prefix);
 
             const float cursorY =
                 TEXT_Y +
-                static_cast<float>(
-                    cursorLine - firstVisibleLine
-                ) * LINE_HEIGHT;
+                static_cast<float>(cursorLine - firstVisibleLine) *
+                LINE_HEIGHT;
 
-            const bool cursorVisible =
-                ((osGetTime() / CURSOR_BLINK_INTERVAL) % 2) == 0;
-
-            if (cursorVisible)
+            if ((osGetTime() / CURSOR_BLINK_INTERVAL) % 2 == 0)
             {
                 C2D_DrawRectSolid(
-                    cursorX,
-                    cursorY,
-                    0.7f,
-                    1.5f,
-                    10.0f,
+                    cursorX, cursorY, 0.7f,
+                    1.5f, 10.0f,
                     COLOR_MUSGO
                 );
             }
         }
     }
 
-    void drawBottomScreen()
+    KeyRect getKeyRect(int row, int column)
     {
-        C2D_TextBufClear(textBuffer);
+        return {
+            KEY_MARGIN + column * (KEY_WIDTH + KEY_GAP),
+            KEY_START_Y + row * KEY_ROW_STEP,
+            KEY_WIDTH,
+            KEY_HEIGHT
+        };
+    }
 
-        drawCenteredText(
-            "Laura",
-            320.0f,
-            25.0f,
-            0.75f,
-            COLOR_CARBON
-        );
-
-        drawCenteredText(
-            "Documento sin titulo",
-            320.0f,
-            61.0f,
-            0.42f,
-            COLOR_MUSGO
+    void drawKey(
+        const KeyRect& rect,
+        const char* label,
+        bool active = false,
+        float scale = 0.48f)
+    {
+        C2D_DrawRectSolid(
+            rect.x,
+            rect.y,
+            0.5f,
+            rect.width,
+            rect.height,
+            COLOR_TECLA_BORDE
         );
 
         C2D_DrawRectSolid(
-            24.0f,
-            91.0f,
-            0.5f,
-            272.0f,
-            1.0f,
+            rect.x + 1.0f,
+            rect.y + 1.0f,
+            0.6f,
+            rect.width - 2.0f,
+            rect.height - 2.0f,
+            active ? COLOR_TECLA_ACTIVA : COLOR_TECLA
+        );
+
+        C2D_DrawRectSolid(
+            rect.x + 2.0f,
+            rect.y + 2.0f,
+            0.7f,
+            rect.width - 4.0f,
+            2.0f,
+            COLOR_TECLA_SUPERIOR
+        );
+
+        if (label != nullptr && label[0] != '\0')
+        {
+            C2D_Text text;
+
+            C2D_TextParse(&text, textBuffer, label);
+            C2D_TextOptimize(&text);
+
+            float width = 0.0f;
+            float height = 0.0f;
+
+            C2D_TextGetDimensions(
+                &text,
+                scale,
+                scale,
+                &width,
+                &height
+            );
+
+            C2D_DrawText(
+                &text,
+                C2D_WithColor,
+                rect.x + (rect.width - width) / 2.0f,
+                rect.y + (rect.height - height) / 2.0f,
+                0.8f,
+                scale,
+                scale,
+                COLOR_CARBON
+            );
+        }
+    }
+
+    const char* getKeyLabel(
+        const KeyDefinition& key,
+        bool shift,
+        bool altGr,
+        bool caps)
+    {
+        if (key.letter)
+        {
+            const bool uppercase = caps != shift;
+
+            if (altGr && key.altGr[0] != '\0')
+                return key.altGr;
+
+            return uppercase ? key.shift : key.base;
+        }
+
+        if (altGr)
+            return key.altGr;
+
+        return shift ? key.shift : key.base;
+    }
+
+    void drawToolbar()
+    {
+        const char* labels[] = {
+            "N", "K", "S", "Alin.", "Aa", "¶", "DEL"
+        };
+
+        constexpr float xStart = 4.0f;
+        constexpr float gap = 2.0f;
+        constexpr float width = 43.0f;
+        constexpr float height = 19.0f;
+
+        for (int i = 0; i < 7; ++i)
+        {
+            drawKey(
+                {
+                    xStart + i * (width + gap),
+                    3.0f,
+                    width,
+                    height
+                },
+                labels[i],
+                false,
+                i == 3 ? 0.34f : 0.42f
+            );
+        }
+    }
+
+    void drawWordPreview()
+    {
+        C2D_DrawRectSolid(
+            5.0f, 27.0f, 0.5f,
+            310.0f, 21.0f,
             COLOR_BORDE
         );
 
-        drawCenteredText(
-            "Navegacion del documento",
-            320.0f,
-            110.0f,
-            0.40f,
-            COLOR_CARBON
+        C2D_DrawRectSolid(
+            6.0f, 28.0f, 0.6f,
+            308.0f, 19.0f,
+            COLOR_PAPEL
         );
 
-        drawCenteredText(
-            "Cruceta: mover cursor",
-            320.0f,
-            137.0f,
-            0.38f,
-            COLOR_SECUNDARIO
+        const std::string word = getCurrentWord();
+
+        if (word.empty())
+        {
+            drawText(
+                "Palabra actual",
+                11.0f,
+                33.0f,
+                0.34f,
+                COLOR_SECUNDARIO
+            );
+        }
+        else
+        {
+            drawText(
+                word.c_str(),
+                11.0f,
+                32.0f,
+                0.48f,
+                COLOR_MUSGO
+            );
+        }
+    }
+
+    void drawKeyboard(bool shift, bool altGr)
+    {
+        for (int row = 0; row < 5; ++row)
+        {
+            for (int column = 0; column < 10; ++column)
+            {
+                const KeyDefinition& key = keyboard[row][column];
+
+                const char* label =
+                    getKeyLabel(key, shift, altGr, capsLock);
+
+                drawKey(
+                    getKeyRect(row, column),
+                    label,
+                    false,
+                    0.48f
+                );
+            }
+        }
+
+        // Barra inferior: tabulación, espacio y sangría.
+        drawKey(
+            {5.0f, 188.0f, 43.0f, 28.0f},
+            "->|",
+            false,
+            0.42f
         );
 
-        drawCenteredText(
-            "START: salir del editor",
-            320.0f,
-            157.0f,
-            0.38f,
-            COLOR_SECUNDARIO
+        drawKey(
+            {50.0f, 188.0f, 220.0f, 28.0f},
+            "ESPACIO",
+            false,
+            0.48f
         );
 
-        drawCenteredText(
-            "Escritura y herramientas",
-            320.0f,
-            195.0f,
-            0.34f,
-            COLOR_MUSGO
-        );
-
-        drawCenteredText(
-            "se incorporaran en la siguiente fase",
-            320.0f,
-            209.0f,
-            0.30f,
-            COLOR_SECUNDARIO
+        drawKey(
+            {272.0f, 188.0f, 43.0f, 28.0f},
+            "=->",
+            false,
+            0.42f
         );
     }
 
-    void drawEditor()
+    void drawBottomScreen(bool shift, bool altGr)
+    {
+        drawToolbar();
+        drawWordPreview();
+
+        drawKeyboard(shift, altGr);
+
+        if (capsLock)
+        {
+            drawText(
+                "MAY",
+                283.0f,
+                34.0f,
+                0.30f,
+                COLOR_MUSGO
+            );
+        }
+    }
+
+    void drawEditor(bool shift, bool altGr)
     {
         C3D_FrameBegin(C3D_FRAME_SYNCDRAW);
 
-        // Pantalla superior: documento.
+        C2D_TextBufClear(textBuffer);
+
         C2D_TargetClear(topScreen, COLOR_CREMA);
         C2D_SceneBegin(topScreen);
 
         drawPage();
         drawDocument();
 
-        // Pantalla inferior: información provisional.
         C2D_TargetClear(bottomScreen, COLOR_CREMA);
         C2D_SceneBegin(bottomScreen);
 
-        drawBottomScreen();
+        drawBottomScreen(shift, altGr);
 
         C3D_FrameEnd(0);
     }
+
+    int getTouchedKey(float x, float y)
+    {
+        if (y >= 188.0f && y <= 216.0f)
+        {
+            if (x >= 5.0f && x <= 48.0f)
+                return 100;
+
+            if (x >= 50.0f && x <= 270.0f)
+                return 101;
+
+            if (x >= 272.0f && x <= 315.0f)
+                return 102;
+        }
+
+        for (int row = 0; row < 5; ++row)
+        {
+            for (int column = 0; column < 10; ++column)
+            {
+                const KeyRect rect = getKeyRect(row, column);
+
+                if (x >= rect.x && x <= rect.x + rect.width &&
+                    y >= rect.y && y <= rect.y + rect.height)
+                {
+                    return row * 10 + column;
+                }
+            }
+        }
+
+        return -1;
+    }
+
+    void activateKeyboardKey(int keyIndex, bool shift, bool altGr)
+    {
+        if (keyIndex == 100)
+        {
+            insertTab();
+            return;
+        }
+
+        if (keyIndex == 101)
+        {
+            insertCharacter(" ");
+            return;
+        }
+
+        if (keyIndex == 102)
+        {
+            increaseIndent();
+            return;
+        }
+
+        if (keyIndex < 0 || keyIndex >= 50)
+            return;
+
+        const int row = keyIndex / 10;
+        const int column = keyIndex % 10;
+
+        const KeyDefinition& key = keyboard[row][column];
+
+        if (row == 3 && column == 9)
+        {
+            const char* accent =
+                altGr ? "`" : (shift ? "¨" : "´");
+
+            activateDeadKey(accent);
+            return;
+        }
+
+        if (row == 0 && column == 9 && altGr)
+        {
+            activateDeadKey("^");
+            return;
+        }
+
+        if (row == 3 && column == 2 && altGr)
+        {
+            insertCharacter(shift ? "Ç" : "ç");
+            return;
+        }
+
+        const char* value =
+            getKeyLabel(key, shift, altGr, capsLock);
+
+        if (value != nullptr && value[0] != '\0')
+            insertCharacter(value);
+    }
+
+    void processTouch(bool shift, bool altGr)
+    {
+        const u32 held = hidKeysHeld();
+
+        if (!(held & KEY_TOUCH))
+        {
+            activeTouchKey = -1;
+            nextRepeatTime = 0;
+            return;
+        }
+
+        touchPosition touch;
+        hidTouchRead(&touch);
+
+        const int touchedKey =
+            getTouchedKey(
+                static_cast<float>(touch.px),
+                static_cast<float>(touch.py)
+            );
+
+        if (touchedKey < 0)
+        {
+            activeTouchKey = -1;
+            nextRepeatTime = 0;
+            return;
+        }
+
+        const u64 now = osGetTime();
+
+        if (touchedKey != activeTouchKey)
+        {
+            activeTouchKey = touchedKey;
+
+            activateKeyboardKey(
+                activeTouchKey,
+                shift,
+                altGr
+            );
+
+            nextRepeatTime = now + KEY_REPEAT_DELAY;
+        }
+        else if (now >= nextRepeatTime)
+        {
+            activateKeyboardKey(
+                activeTouchKey,
+                shift,
+                altGr
+            );
+
+            nextRepeatTime = now + KEY_REPEAT_INTERVAL;
+        }
+    }
 }
 
-bool Editor_Init()
+bool Editor_Init(
+    C3D_RenderTarget* topTarget,
+    C3D_RenderTarget* bottomTarget)
 {
+    if (topTarget == nullptr || bottomTarget == nullptr)
+        return false;
+
+    topScreen = topTarget;
+    bottomScreen = bottomTarget;
+
     textBuffer = C2D_TextBufNew(4096);
 
     if (textBuffer == nullptr)
@@ -604,6 +1065,13 @@ bool Editor_Init()
     cursorPosition = 0;
     firstVisibleLine = 0;
 
+    capsLock = false;
+    pendingDeadKey.clear();
+
+    lastLPress = 0;
+    nextRepeatTime = 0;
+    activeTouchKey = -1;
+
     buildVisualLines();
 
     return true;
@@ -611,38 +1079,51 @@ bool Editor_Init()
 
 void Editor_Run()
 {
-    topScreen = C2D_CreateScreenTarget(
-        GFX_TOP,
-        GFX_LEFT
-    );
-
-    bottomScreen = C2D_CreateScreenTarget(
-        GFX_BOTTOM,
-        GFX_LEFT
-    );
-
     while (aptMainLoop())
     {
         hidScanInput();
 
-        const u32 pressedKeys = hidKeysDown();
+        const u32 pressed = hidKeysDown();
+        const u32 held = hidKeysHeld();
 
-        if (pressedKeys & KEY_START)
+        const bool shift = (held & KEY_L) != 0;
+        const bool altGr = (held & KEY_ZL) != 0;
+
+        if (pressed & KEY_START)
             break;
 
-        if (pressedKeys & KEY_LEFT)
+        // Doble pulsación de L: bloqueo de mayúsculas.
+        if (pressed & KEY_L)
+        {
+            const u64 now = osGetTime();
+
+            if (lastLPress != 0 &&
+                now - lastLPress <= CAPS_DOUBLE_PRESS_MS)
+            {
+                capsLock = !capsLock;
+                lastLPress = 0;
+            }
+            else
+            {
+                lastLPress = now;
+            }
+        }
+
+        if (pressed & KEY_LEFT)
             moveCursorHorizontal(-1);
 
-        if (pressedKeys & KEY_RIGHT)
+        if (pressed & KEY_RIGHT)
             moveCursorHorizontal(1);
 
-        if (pressedKeys & KEY_UP)
+        if (pressed & KEY_UP)
             moveCursorVertical(-1);
 
-        if (pressedKeys & KEY_DOWN)
+        if (pressed & KEY_DOWN)
             moveCursorVertical(1);
 
-                drawEditor();
+        processTouch(shift, altGr);
+
+        drawEditor(shift, altGr);
     }
 }
 
@@ -653,4 +1134,7 @@ void Editor_Fini()
         C2D_TextBufDelete(textBuffer);
         textBuffer = nullptr;
     }
+
+    topScreen = nullptr;
+    bottomScreen = nullptr;
 }
