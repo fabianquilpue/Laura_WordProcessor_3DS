@@ -29,9 +29,9 @@ int main(int argc, char* argv[])
     {
         hidScanInput();
 
-        const u32 keysDown = hidKeysDown();
+        const u32 pressedKeys = hidKeysDown();
 
-        if ((keysDown & KEY_START) != 0)
+        if ((pressedKeys & KEY_START) != 0)
         {
             break;
         }
