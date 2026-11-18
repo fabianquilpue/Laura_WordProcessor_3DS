@@ -1,47 +1,447 @@
 
 #include <3ds.h>
-#include <cstdio>
+#include <citro2d.h>
+
+#include <cmath>
+#include <cstdint>
+
+namespace
+{
+    constexpr float TOP_WIDTH = 400.0f;
+    constexpr float BOTTOM_WIDTH = 320.0f;
+    constexpr float SCREEN_HEIGHT = 240.0f;
+
+    constexpr u32 COLOR_CREMA =
+        C2D_Color32(247, 245, 238, 255);
+
+    constexpr u32 COLOR_CARBON =
+        C2D_Color32(30, 30, 30, 255);
+
+    constexpr u32 COLOR_MUSGO =
+        C2D_Color32(78, 122, 101, 255);
+
+    constexpr u64 FADE_DURATION = 900;
+    constexpr u64 BREATH_DURATION = 3600;
+
+    C3D_RenderTarget* topScreen = nullptr;
+    C3D_RenderTarget* bottomScreen = nullptr;
+
+    C2D_SpriteSheet splashSheet = nullptr;
+    C2D_TextBuf textBuffer = nullptr;
+
+    C2D_Text titleText;
+    C2D_Text spanishText;
+    C2D_Text englishText;
+    C2D_Text instructionLine1;
+    C2D_Text instructionLine2;
+
+    C2D_Text editorText;
+    C2D_Text editorMessage;
+
+    u32 interpolateColor(
+        u8 r1, u8 g1, u8 b1,
+        u8 r2, u8 g2, u8 b2,
+        float amount)
+    {
+        if (amount < 0.0f) amount = 0.0f;
+        if (amount > 1.0f) amount = 1.0f;
+
+        const u8 r = static_cast<u8>(r1 + (r2 - r1) * amount);
+        const u8 g = static_cast<u8>(g1 + (g2 - g1) * amount);
+        const u8 b = static_cast<u8>(b1 + (b2 - b1) * amount);
+
+        return C2D_Color32(r, g, b, 255);
+    }
+
+    void prepareText(
+        C2D_Text* text,
+        const char* content)
+    {
+        C2D_TextParse(text, textBuffer, content);
+        C2D_TextOptimize(text);
+    }
+
+    void drawCenteredText(
+        const C2D_Text* text,
+        float screenWidth,
+        float y,
+        float scale,
+        u32 color)
+    {
+        float width = 0.0f;
+
+        C2D_TextGetDimensions(
+            text,
+            scale,
+            scale,
+            &width,
+            nullptr
+        );
+
+        const float x = (screenWidth - width) / 2.0f;
+
+        C2D_DrawText(
+            text,
+            C2D_WithColor,
+            x,
+            y,
+            0.0f,
+            scale,
+            scale,
+            color
+        );
+    }
+
+    void drawFadeOverlay(
+        float screenWidth,
+        u8 alpha)
+    {
+        const u32 overlayColor =
+            C2D_Color32(0, 0, 0, alpha);
+
+        C2D_DrawRectSolid(
+            0.0f,
+            0.0f,
+            1.0f,
+            screenWidth,
+            SCREEN_HEIGHT,
+            overlayColor
+        );
+    }
+
+    void drawLogo()
+    {
+        if (splashSheet == nullptr)
+            return;
+
+        const C2D_Image logo =
+            C2D_SpriteSheetGetImage(splashSheet, 0);
+
+        const float originalWidth =
+            static_cast<float>(logo.subtex->width);
+
+        const float originalHeight =
+            static_cast<float>(logo.subtex->height);
+
+        if (originalWidth <= 0.0f || originalHeight <= 0.0f)
+            return;
+
+        // Escalado proporcional: nunca se deforma el original.
+        constexpr float MAX_LOGO_WIDTH = 260.0f;
+        constexpr float MAX_LOGO_HEIGHT = 78.0f;
+
+        float scale = MAX_LOGO_WIDTH / originalWidth;
+
+        if (originalHeight * scale > MAX_LOGO_HEIGHT)
+            scale = MAX_LOGO_HEIGHT / originalHeight;
+
+        const float width = originalWidth * scale;
+        const float height = originalHeight * scale;
+
+        const float x = (TOP_WIDTH - width) / 2.0f;
+        const float y = 28.0f;
+
+        C2D_DrawImageAt(
+            logo,
+            x,
+            y,
+            0.0f,
+            nullptr,
+            scale,
+            scale
+        );
+    }
+
+    void drawWelcome(u64 elapsed)
+    {
+        const float breathPhase =
+            static_cast<float>(elapsed % BREATH_DURATION) /
+            static_cast<float>(BREATH_DURATION);
+
+        const float wave =
+            (std::sin(breathPhase * 6.28318530718f) + 1.0f) / 2.0f;
+
+        // El texto llega casi a confundirse con el fondo.
+        const float breathIntensity =
+            0.025f + wave * 0.975f;
+
+        const u32 breathingColor = interpolateColor(
+            247, 245, 238,
+            78, 122, 101,
+            breathIntensity
+        );
+
+        C3D_FrameBegin(C3D_FRAME_SYNCDRAW);
+
+        // ----------------------------------
+        // Pantalla superior
+        // ----------------------------------
+
+        C2D_TargetClear(topScreen, COLOR_CREMA);
+        C2D_SceneBegin(topScreen);
+
+        drawLogo();
+
+        // El título siempre queda debajo del logotipo.
+        drawCenteredText(
+            &titleText,
+            TOP_WIDTH,
+            126.0f,
+            0.82f,
+            COLOR_CARBON
+        );
+
+        drawCenteredText(
+            &spanishText,
+            TOP_WIDTH,
+            166.0f,
+            0.43f,
+            COLOR_CARBON
+        );
+
+        drawCenteredText(
+            &englishText,
+            TOP_WIDTH,
+            190.0f,
+            0.38f,
+            COLOR_CARBON
+        );
+
+        // ----------------------------------
+        // Pantalla inferior
+        // ----------------------------------
+
+        C2D_TargetClear(bottomScreen, COLOR_CREMA);
+        C2D_SceneBegin(bottomScreen);
+
+        drawCenteredText(
+            &instructionLine1,
+            BOTTOM_WIDTH,
+            98.0f,
+            0.43f,
+            breathingColor
+        );
+
+        drawCenteredText(
+            &instructionLine2,
+            BOTTOM_WIDTH,
+            124.0f,
+            0.43f,
+            breathingColor
+        );
+
+        C3D_FrameEnd(0);
+    }
+
+    void drawTransition(u8 blackAlpha)
+    {
+        C3D_FrameBegin(C3D_FRAME_SYNCDRAW);
+
+        C2D_TargetClear(topScreen, COLOR_CREMA);
+        C2D_SceneBegin(topScreen);
+        drawLogo();
+
+        drawCenteredText(
+            &titleText,
+            TOP_WIDTH,
+            126.0f,
+            0.82f,
+            COLOR_CARBON
+        );
+
+        drawCenteredText(
+            &spanishText,
+            TOP_WIDTH,
+            166.0f,
+            0.43f,
+            COLOR_CARBON
+        );
+
+        drawCenteredText(
+            &englishText,
+            TOP_WIDTH,
+            190.0f,
+            0.38f,
+            COLOR_CARBON
+        );
+
+        drawFadeOverlay(TOP_WIDTH, blackAlpha);
+
+        C2D_TargetClear(bottomScreen, COLOR_CREMA);
+        C2D_SceneBegin(bottomScreen);
+
+        drawCenteredText(
+            &instructionLine1,
+            BOTTOM_WIDTH,
+            98.0f,
+            0.43f,
+            COLOR_MUSGO
+        );
+
+        drawCenteredText(
+            &instructionLine2,
+            BOTTOM_WIDTH,
+            124.0f,
+            0.43f,
+            COLOR_MUSGO
+        );
+
+        drawFadeOverlay(BOTTOM_WIDTH, blackAlpha);
+
+        C3D_FrameEnd(0);
+    }
+
+    void runWelcome()
+    {
+        const u64 startTime = osGetTime();
+
+        bool leaving = false;
+        u64 transitionStart = 0;
+
+        while (aptMainLoop())
+        {
+            hidScanInput();
+
+            const u32 pressedKeys = hidKeysDown();
+
+            if (!leaving && pressedKeys != 0)
+            {
+                leaving = true;
+                transitionStart = osGetTime();
+            }
+
+            if (!leaving)
+            {
+                const u64 elapsed = osGetTime() - startTime;
+
+                drawWelcome(elapsed);
+            }
+            else
+            {
+                const u64 elapsed =
+                    osGetTime() - transitionStart;
+
+                float progress =
+                    static_cast<float>(elapsed) /
+                    static_cast<float>(FADE_DURATION);
+
+                if (progress > 1.0f)
+                    progress = 1.0f;
+
+                const u8 alpha =
+                    static_cast<u8>(progress * 255.0f);
+
+                drawTransition(alpha);
+
+                if (progress >= 1.0f)
+                    break;
+            }
+        }
+    }
+
+    // Pantalla provisional hasta implementar el editor.
+    void runEditorPlaceholder()
+    {
+        while (aptMainLoop())
+        {
+            hidScanInput();
+
+            if (hidKeysDown() & KEY_START)
+                break;
+
+            C3D_FrameBegin(C3D_FRAME_SYNCDRAW);
+
+            C2D_TargetClear(topScreen, COLOR_CREMA);
+            C2D_SceneBegin(topScreen);
+
+            drawCenteredText(
+                &editorText,
+                TOP_WIDTH,
+                105.0f,
+                0.85f,
+                COLOR_CARBON
+            );
+
+            C2D_TargetClear(bottomScreen, COLOR_CREMA);
+            C2D_SceneBegin(bottomScreen);
+
+            drawCenteredText(
+                &editorMessage,
+                BOTTOM_WIDTH,
+                105.0f,
+                0.42f,
+                COLOR_MUSGO
+            );
+
+            C3D_FrameEnd(0);
+        }
+    }
+}
 
 int main(int argc, char* argv[])
 {
     (void)argc;
     (void)argv;
 
+    romfsInit();
+
     gfxInitDefault();
 
-    PrintConsole* topConsole = consoleInit(GFX_TOP, nullptr);
-    PrintConsole* bottomConsole = consoleInit(GFX_BOTTOM, nullptr);
+    C3D_Init(C3D_DEFAULT_CMDBUF_SIZE);
+    C2D_Init(C2D_DEFAULT_MAX_OBJECTS);
+    C2D_Prepare();
 
-    consoleSelect(topConsole);
+    topScreen = C2D_CreateScreenTarget(GFX_TOP, GFX_LEFT);
+    bottomScreen = C2D_CreateScreenTarget(GFX_BOTTOM, GFX_LEFT);
 
-    std::printf("Laura\n");
-    std::printf("Procesador de texto\n");
-    std::printf("Version v1.0.\n\n");
-    std::printf("Inicializacion correcta.\n");
+    textBuffer = C2D_TextBufNew(512);
 
-    consoleSelect(bottomConsole);
+    prepareText(&titleText, "Laura v1.0");
+    prepareText(
+        &spanishText,
+        "Procesador de texto minimalista para Nintendo 3DS"
+    );
+    prepareText(
+        &englishText,
+        "Minimalist word processor for the Nintendo 3DS"
+    );
 
-    std::printf("Nintendo 3DS\n\n");
-    std::printf("Prueba inicial del sistema.\n");
-    std::printf("Presiona START para salir.\n");
+    prepareText(
+        &instructionLine1,
+        "Toca la pantalla o presiona"
+    );
+    prepareText(
+        &instructionLine2,
+        "cualquier boton para continuar."
+    );
 
-    while (aptMainLoop())
+    prepareText(&editorText, "Laura");
+    prepareText(
+        &editorMessage,
+        "Editor en desarrollo"
+    );
+
+    splashSheet = C2D_SpriteSheetLoad(
+        "romfs:/splash.t3x"
+    );
+
+    if (splashSheet != nullptr)
     {
-        hidScanInput();
-
-        const u32 pressedKeys = hidKeysDown();
-
-        if ((pressedKeys & KEY_START) != 0)
-        {
-            break;
-        }
-
-        gfxFlushBuffers();
-        gfxSwapBuffers();
-        gspWaitForVBlank();
+        runWelcome();
+        runEditorPlaceholder();
     }
 
+    if (splashSheet != nullptr)
+        C2D_SpriteSheetFree(splashSheet);
+
+    if (textBuffer != nullptr)
+        C2D_TextBufDelete(textBuffer);
+
+    C2D_Fini();
+    C3D_Fini();
+
     gfxExit();
+    romfsExit();
 
     return 0;
 }
