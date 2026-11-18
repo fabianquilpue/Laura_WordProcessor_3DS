@@ -1,0 +1,63 @@
+
+name: Compilar Laura para Nintendo 3DS
+
+on:
+  push:
+    branches:
+      - main
+      - master
+
+  pull_request:
+
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: Compilar Laura
+
+    runs-on: ubuntu-latest
+
+    container:
+      image: devkitpro/devkitarm:latest
+
+    steps:
+      - name: Descargar repositorio
+        uses: actions/checkout@v4
+
+      - name: Verificar archivos del proyecto
+        run: |
+          echo "Comprobando estructura..."
+          test -f Makefile
+          test -f source/main.cpp
+          test -f assets/icon.png
+          test -f assets/splash.png
+          test -d romfs
+          echo "Estructura correcta."
+
+      - name: Comprobar entorno devkitPro
+        run: |
+          echo "DEVKITPRO=$DEVKITPRO"
+          echo "DEVKITARM=$DEVKITARM"
+          test -f "$DEVKITARM/3ds_rules"
+          arm-none-eabi-g++ --version
+          make --version
+
+      - name: Compilar Laura
+        run: make -j2
+
+      - name: Comprobar ejecutables
+        run: |
+          test -f Laura.3dsx
+          test -f Laura.smdh
+          test -f Laura.elf
+          echo "Los tres archivos fueron generados."
+
+      - name: Publicar compilacion
+        uses: actions/upload-artifact@v4
+        with:
+          name: Laura-Nintendo-3DS
+          path: |
+            Laura.3dsx
+            Laura.smdh
+            Laura.elf
+          if-no-files-found: error
