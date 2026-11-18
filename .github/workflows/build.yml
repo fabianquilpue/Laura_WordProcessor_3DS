@@ -29,14 +29,20 @@ jobs:
           echo "DEVKITPRO=$DEVKITPRO"
           echo "DEVKITARM=$DEVKITARM"
 
-          test -f "$DEVKITARM/3ds_rules"
+          echo "Comprobando compilador..."
           test -x "$DEVKITARM/bin/arm-none-eabi-g++"
+          "$DEVKITARM/bin/arm-none-eabi-g++" --version
+
+          echo "Comprobando reglas..."
+          test -f "$DEVKITARM/3ds_rules"
+
+          echo "Comprobando libctru..."
           test -f "$DEVKITPRO/libctru/include/3ds.h"
 
-          echo "Cabecera principal de libctru encontrada."
+          echo "Cabecera encontrada:"
+          ls -l "$DEVKITPRO/libctru/include/3ds.h"
 
-          "$DEVKITARM/bin/arm-none-eabi-g++" --version
-          make --version
+          echo "Entorno devkitPro correcto."
 
       - name: Comprobar estructura del proyecto
         run: |
@@ -48,9 +54,19 @@ jobs:
 
           echo "Estructura del proyecto correcta."
 
+      - name: Diagnosticar rutas de compilacion
+        run: |
+          echo "Ruta de libctru:"
+          ls -ld "$DEVKITPRO/libctru"
+          ls -ld "$DEVKITPRO/libctru/include"
+
+          echo "Comprobando cabecera:"
+          test -f "$DEVKITPRO/libctru/include/3ds.h"
+
       - name: Compilar Laura
         run: |
           export PATH="$DEVKITARM/bin:$DEVKITPRO/tools/bin:$PATH"
+          make clean
           make -j2
 
       - name: Comprobar archivos compilados
