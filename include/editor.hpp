@@ -1,7 +1,13 @@
 #ifndef LAURA_EDITOR_HPP
 #define LAURA_EDITOR_HPP
 
-bool Editor_Init();
+#include <3ds.h>
+
+bool Editor_Init(
+    C3D_RenderTarget* topTarget,
+    C3D_RenderTarget* bottomTarget
+);
+
 void Editor_Run();
 void Editor_Fini();
 
