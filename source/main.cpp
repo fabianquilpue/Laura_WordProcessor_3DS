@@ -378,7 +378,8 @@ int main(int argc, char* argv[])
         "romfs:/splash.t3x"
     );
 
-    if (splashSheet != nullptr && Editor_Init())
+    if (splashSheet != nullptr &&
+    Editor_Init(topScreen, bottomScreen))
     {
         runWelcome();
         Editor_Run();
