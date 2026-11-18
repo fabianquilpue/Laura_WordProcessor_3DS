@@ -9,13 +9,12 @@
 #include <cstddef>
 #include <cstdint>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace
 {
-    constexpr float SCREEN_WIDTH = 400.0f;
     constexpr float SCREEN_HEIGHT = 240.0f;
-    constexpr float BOTTOM_WIDTH = 320.0f;
 
     constexpr float PAGE_X = 24.0f;
     constexpr float PAGE_Y = 12.0f;
@@ -41,6 +40,11 @@ namespace
     constexpr u64 CAPS_DOUBLE_PRESS_MS = 350;
     constexpr u64 KEY_REPEAT_DELAY = 350;
     constexpr u64 KEY_REPEAT_INTERVAL = 65;
+
+    constexpr u64 PHYSICAL_REPEAT_DELAY = 350;
+    constexpr u64 PHYSICAL_REPEAT_INTERVAL = 65;
+
+    constexpr std::size_t MAX_HISTORY = 100;
 
     constexpr u32 COLOR_CREMA =
         C2D_Color32(247, 245, 238, 255);
@@ -72,6 +76,9 @@ namespace
     constexpr u32 COLOR_SECUNDARIO =
         C2D_Color32(130, 130, 120, 255);
 
+    constexpr u32 COLOR_SELECCION =
+        C2D_Color32(190, 211, 195, 255);
+
     C3D_RenderTarget* topScreen = nullptr;
     C3D_RenderTarget* bottomScreen = nullptr;
 
@@ -86,14 +93,11 @@ namespace
     bool capsLock = false;
     std::string pendingDeadKey;
 
-    // Selección de texto.
     bool hasSelection = false;
     std::size_t selectionAnchor = 0;
 
-    // Portapapeles interno de Laura.
     std::string clipboard;
 
-    // Historial de deshacer y rehacer.
     struct EditorSnapshot
     {
         std::string document;
@@ -105,14 +109,10 @@ namespace
     std::vector<EditorSnapshot> undoHistory;
     std::vector<EditorSnapshot> redoHistory;
 
-    constexpr std::size_t MAX_HISTORY = 100;
-
-    u64 nextPhysicalRepeat = 0;
-    constexpr u64 PHYSICAL_REPEAT_DELAY = 350;
-    constexpr u64 PHYSICAL_REPEAT_INTERVAL = 65;
-
     u64 lastLPress = 0;
     u64 nextRepeatTime = 0;
+    u64 nextPhysicalRepeat = 0;
+
     int activeTouchKey = -1;
 
     struct KeyDefinition
@@ -132,7 +132,6 @@ namespace
     };
 
     const std::array<std::array<KeyDefinition, 10>, 5> keyboard = {{
-        // Fila 1: números.
         {{
             {"1", "|", "@", false},
             {"2", "*", "#", false},
@@ -145,8 +144,6 @@ namespace
             {"9", ")", ">", false},
             {"0", "=", "^", false}
         }},
-
-        // Fila 2: QWERTY superior.
         {{
             {"q", "Q", "", true},
             {"w", "W", "", true},
@@ -159,8 +156,6 @@ namespace
             {"o", "O", "", true},
             {"p", "P", "", true}
         }},
-
-        // Fila 3: QWERTY central.
         {{
             {"a", "A", "", true},
             {"s", "S", "", true},
@@ -173,8 +168,6 @@ namespace
             {"l", "L", "", true},
             {"ñ", "Ñ", "~", true}
         }},
-
-        // Fila 4: QWERTY inferior.
         {{
             {"z", "Z", "", true},
             {"x", "X", "", true},
@@ -187,8 +180,6 @@ namespace
             {".", ".", ".", false},
             {"´", "¨", "`", false}
         }},
-
-        // Fila 5: puntuación.
         {{
             {"«", "«", "«", false},
             {"¿", "¿", "¿", false},
@@ -202,6 +193,13 @@ namespace
             {"»", "»", "»", false}
         }}
     }};
+
+    // Declaraciones anticipadas.
+    void insertCharacter(const std::string& value);
+    void buildVisualLines();
+    void updateScroll();
+    void deleteSelection();
+    void clearSelection();
 
     std::size_t nextUTF8(
         const std::string& text,
@@ -265,7 +263,8 @@ namespace
 
         while (position < document.size())
         {
-            if (document[position] == '\n')
+            if (document[position] == '\n' ||
+                document[position] == '\f')
             {
                 visualLines.push_back({lineStart, position});
 
@@ -280,7 +279,8 @@ namespace
 
             if (characterCount >= MAX_LINE_CHARACTERS &&
                 position < document.size() &&
-                document[position] != '\n')
+                document[position] != '\n' &&
+                document[position] != '\f')
             {
                 visualLines.push_back({lineStart, position});
                 lineStart = position;
@@ -311,7 +311,6 @@ namespace
 
         if (cursorLine < firstVisibleLine)
             firstVisibleLine = cursorLine;
-
         else if (cursorLine >= firstVisibleLine + VISIBLE_LINES)
             firstVisibleLine = cursorLine - VISIBLE_LINES + 1;
 
@@ -324,55 +323,138 @@ namespace
             std::min(firstVisibleLine, maximumScroll);
     }
 
-    void moveCursorHorizontal(int direction)
+    void pushUndo()
     {
-        if (direction < 0)
-            cursorPosition = previousUTF8(document, cursorPosition);
+        undoHistory.push_back({
+            document,
+            cursorPosition,
+            selectionAnchor,
+            hasSelection
+        });
 
-        else if (direction > 0)
-            cursorPosition = nextUTF8(document, cursorPosition);
+        if (undoHistory.size() > MAX_HISTORY)
+            undoHistory.erase(undoHistory.begin());
+
+        redoHistory.clear();
     }
 
-    void moveCursorVertical(int direction)
+    void restoreSnapshot(const EditorSnapshot& snapshot)
     {
-        if (visualLines.empty())
-            return;
+        document = snapshot.document;
+        cursorPosition = snapshot.cursor;
+        selectionAnchor = snapshot.anchor;
+        hasSelection = snapshot.selection;
 
-        const std::size_t currentLine = findCursorLine();
+        if (cursorPosition > document.size())
+            cursorPosition = document.size();
 
-        if (direction < 0 && currentLine == 0)
-            return;
+        if (selectionAnchor > document.size())
+            selectionAnchor = document.size();
 
-        if (direction > 0 && currentLine + 1 >= visualLines.size())
-            return;
+        pendingDeadKey.clear();
 
-        const std::size_t lineStart = visualLines[currentLine].first;
+        buildVisualLines();
+        updateScroll();
+    }
 
-        const std::size_t column =
-            countCharacters(document, lineStart, cursorPosition);
-
-        const std::size_t targetLine =
-            direction < 0 ? currentLine - 1 : currentLine + 1;
-
-        const std::size_t targetStart = visualLines[targetLine].first;
-        const std::size_t targetEnd = visualLines[targetLine].second;
-
-        std::size_t targetPosition = targetStart;
-        std::size_t remaining = column;
-
-        while (targetPosition < targetEnd && remaining > 0)
+    void undoAction(int amount = 1)
+    {
+        while (amount-- > 0 && !undoHistory.empty())
         {
-            targetPosition = nextUTF8(document, targetPosition);
-            --remaining;
-        }
+            redoHistory.push_back({
+                document,
+                cursorPosition,
+                selectionAnchor,
+                hasSelection
+            });
 
-        cursorPosition = targetPosition;
+            const EditorSnapshot previous = undoHistory.back();
+            undoHistory.pop_back();
+
+            restoreSnapshot(previous);
+        }
+    }
+
+    void redoAction()
+    {
+        if (redoHistory.empty())
+            return;
+
+        undoHistory.push_back({
+            document,
+            cursorPosition,
+            selectionAnchor,
+            hasSelection
+        });
+
+        const EditorSnapshot next = redoHistory.back();
+        redoHistory.pop_back();
+
+        restoreSnapshot(next);
+    }
+
+    std::size_t selectionStart()
+    {
+        return std::min(cursorPosition, selectionAnchor);
+    }
+
+    std::size_t selectionEnd()
+    {
+        return std::max(cursorPosition, selectionAnchor);
+    }
+
+    void clearSelection()
+    {
+        hasSelection = false;
+        selectionAnchor = cursorPosition;
+    }
+
+    void deleteSelection()
+    {
+        if (!hasSelection)
+            return;
+
+        const std::size_t start = selectionStart();
+        const std::size_t end = selectionEnd();
+
+        document.erase(start, end - start);
+        cursorPosition = start;
+
+        clearSelection();
     }
 
     void insertRaw(const std::string& value)
     {
+        if (value.empty())
+            return;
+
+        pushUndo();
+
+        if (hasSelection)
+            deleteSelection();
+
         document.insert(cursorPosition, value);
         cursorPosition += value.size();
+
+        clearSelection();
+    }
+
+    void insertText(const std::string& value)
+    {
+        if (value.empty())
+            return;
+
+        pushUndo();
+
+        if (hasSelection)
+            deleteSelection();
+
+        document.insert(cursorPosition, value);
+        cursorPosition += value.size();
+
+        clearSelection();
+        buildVisualLines();
+        updateScroll();
     }
 
     void insertCharacter(const std::string& value)
@@ -418,18 +500,18 @@ namespace
             {"^", "O", "Ô"}, {"^", "U", "Û"}
         };
 
+        std::string result = dead + value;
+
         for (const Composition& item : combinations)
         {
             if (dead == item.dead && value == item.letter)
             {
-                insertRaw(item.result);
-                return;
+                result = item.result;
+                break;
             }
         }
 
-        // Si la combinación no existe, conserva ambos caracteres.
-        insertRaw(dead);
-        insertRaw(value);
+        insertRaw(result);
     }
 
     void activateDeadKey(const std::string& accent)
@@ -448,14 +530,25 @@ namespace
             return;
         }
 
+        if (hasSelection)
+        {
+            pushUndo();
+            deleteSelection();
+            return;
+        }
+
         if (cursorPosition == 0)
             return;
 
         const std::size_t previous =
             previousUTF8(document, cursorPosition);
 
+        pushUndo();
+
         document.erase(previous, cursorPosition - previous);
         cursorPosition = previous;
+
+        clearSelection();
     }
 
     void insertTab()
@@ -465,8 +558,21 @@ namespace
 
     void increaseIndent()
     {
+        if (hasSelection)
+        {
+            pushUndo();
+            deleteSelection();
+        }
+        else
+        {
+            pushUndo();
+        }
+
         const std::size_t lineStart =
-            document.rfind('\n', cursorPosition == 0 ? 0 : cursorPosition - 1);
+            document.rfind(
+                '\n',
+                cursorPosition == 0 ? 0 : cursorPosition - 1
+            );
 
         const std::size_t insertionPosition =
             lineStart == std::string::npos ? 0 : lineStart + 1;
@@ -475,6 +581,202 @@ namespace
 
         if (cursorPosition >= insertionPosition)
             cursorPosition += 4;
+
+        clearSelection();
+    }
+
+    void copySelection()
+    {
+        if (!hasSelection)
+            return;
+
+        clipboard = document.substr(
+            selectionStart(),
+            selectionEnd() - selectionStart()
+        );
+    }
+
+    void cutSelection()
+    {
+        if (!hasSelection)
+            return;
+
+        copySelection();
+        pushUndo();
+        deleteSelection();
+    }
+
+    void pasteClipboard()
+    {
+        if (!clipboard.empty())
+            insertText(clipboard);
+    }
+
+    void deleteWord()
+    {
+        if (hasSelection)
+        {
+            pushUndo();
+            deleteSelection();
+            return;
+        }
+
+        if (cursorPosition == 0)
+            return;
+
+        std::size_t start = cursorPosition;
+
+        while (start > 0)
+        {
+            const std::size_t previous =
+                previousUTF8(document, start);
+
+            const std::string character =
+                document.substr(previous, start - previous);
+
+            if (character == " " || character == "\n" ||
+                character == "\t" || character == "\f")
+                break;
+
+            start = previous;
+        }
+
+        if (start == cursorPosition)
+            return;
+
+        pushUndo();
+        document.erase(start, cursorPosition - start);
+        cursorPosition = start;
+
+        clearSelection();
+    }
+
+    void deleteLine()
+    {
+        if (hasSelection)
+        {
+            pushUndo();
+            deleteSelection();
+            return;
+        }
+
+        const std::size_t lineStart =
+            document.rfind(
+                '\n',
+                cursorPosition == 0 ? 0 : cursorPosition - 1
+            );
+
+        const std::size_t start =
+            lineStart == std::string::npos ? 0 : lineStart + 1;
+
+        std::size_t end = document.find('\n', cursorPosition);
+
+        if (end == std::string::npos)
+            end = document.size();
+        else
+            ++end;
+
+        if (start == end)
+            return;
+
+        pushUndo();
+        document.erase(start, end - start);
+        cursorPosition = start;
+
+        clearSelection();
+    }
+
+    void insertLineBreak()
+    {
+        insertCharacter("\n");
+    }
+
+    void insertParagraphBreak()
+    {
+        insertCharacter("\n\n");
+    }
+
+    void insertPageBreak()
+    {
+        insertCharacter("\f");
+    }
+
+    void moveCursorHorizontal(int direction, bool selecting)
+    {
+        if (selecting)
+        {
+            if (!hasSelection)
+            {
+                selectionAnchor = cursorPosition;
+                hasSelection = true;
+            }
+        }
+        else
+        {
+            clearSelection();
+        }
+
+        if (direction < 0)
+            cursorPosition = previousUTF8(document, cursorPosition);
+        else if (direction > 0)
+            cursorPosition = nextUTF8(document, cursorPosition);
+
+        if (hasSelection && cursorPosition == selectionAnchor)
+            clearSelection();
+    }
+
+    void moveCursorVertical(int direction, bool selecting)
+    {
+        buildVisualLines();
+
+        if (visualLines.empty())
+            return;
+
+        if (selecting)
+        {
+            if (!hasSelection)
+            {
+                selectionAnchor = cursorPosition;
+                hasSelection = true;
+            }
+        }
+        else
+        {
+            clearSelection();
+        }
+
+        const std::size_t currentLine = findCursorLine();
+
+        if (direction < 0 && currentLine == 0)
+            return;
+
+        if (direction > 0 && currentLine + 1 >= visualLines.size())
+            return;
+
+        const std::size_t lineStart = visualLines[currentLine].first;
+
+        const std::size_t column =
+            countCharacters(document, lineStart, cursorPosition);
+
+        const std::size_t targetLine =
+            direction < 0 ? currentLine - 1 : currentLine + 1;
+
+        const std::size_t targetStart = visualLines[targetLine].first;
+        const std::size_t targetEnd = visualLines[targetLine].second;
+
+        std::size_t targetPosition = targetStart;
+        std::size_t remaining = column;
+
+        while (targetPosition < targetEnd && remaining > 0)
+        {
+            targetPosition = nextUTF8(document, targetPosition);
+            --remaining;
+        }
+
+        cursorPosition = targetPosition;
+
+        if (hasSelection && cursorPosition == selectionAnchor)
+            clearSelection();
     }
 
     std::string getCurrentWord()
@@ -491,7 +793,7 @@ namespace
                 document.substr(previous, start - previous);
 
             if (character == " " || character == "\n" ||
-                character == "\t")
+                character == "\t" || character == "\f")
                 break;
 
             start = previous;
@@ -505,7 +807,7 @@ namespace
                 document.substr(end, next - end);
 
             if (character == " " || character == "\n" ||
-                character == "\t")
+                character == "\t" || character == "\f")
                 break;
 
             end = next;
@@ -535,40 +837,6 @@ namespace
             &text,
             C2D_WithColor,
             x,
-            y,
-            0.5f,
-            scale,
-            scale,
-            color
-        );
-    }
-
-    void drawCenteredText(
-        const char* content,
-        float screenWidth,
-        float y,
-        float scale,
-        u32 color)
-    {
-        C2D_Text text;
-
-        C2D_TextParse(&text, textBuffer, content);
-        C2D_TextOptimize(&text);
-
-        float width = 0.0f;
-
-        C2D_TextGetDimensions(
-            &text,
-            scale,
-            scale,
-            &width,
-            nullptr
-        );
-
-        C2D_DrawText(
-            &text,
-            C2D_WithColor,
-            (screenWidth - width) / 2.0f,
             y,
             0.5f,
             scale,
@@ -646,6 +914,45 @@ namespace
 
             const std::string line =
                 document.substr(start, end - start);
+
+            if (hasSelection)
+            {
+                const std::size_t selectedStart = selectionStart();
+                const std::size_t selectedEnd = selectionEnd();
+
+                const std::size_t overlapStart =
+                    std::max(start, selectedStart);
+
+                const std::size_t overlapEnd =
+                    std::min(end, selectedEnd);
+
+                if (overlapStart < overlapEnd)
+                {
+                    const std::string prefix =
+                        document.substr(start, overlapStart - start);
+
+                    const std::string selected =
+                        document.substr(
+                            overlapStart,
+                            overlapEnd - overlapStart
+                        );
+
+                    const float selectionX =
+                        TEXT_X + measureTextWidth(prefix);
+
+                    const float selectionWidth =
+                        measureTextWidth(selected);
+
+                    C2D_DrawRectSolid(
+                        selectionX,
+                        TEXT_Y + static_cast<float>(i) * LINE_HEIGHT,
+                        0.4f,
+                        selectionWidth,
+                        11.0f,
+                        COLOR_SELECCION
+                    );
+                }
+            }
 
             if (!line.empty())
             {
@@ -868,7 +1175,6 @@ namespace
             }
         }
 
-        // Barra inferior: tabulación, espacio y sangría.
         drawKey(
             {5.0f, 188.0f, 43.0f, 28.0f},
             "->|",
@@ -895,7 +1201,6 @@ namespace
     {
         drawToolbar();
         drawWordPreview();
-
         drawKeyboard(shift, altGr);
 
         if (capsLock)
@@ -932,6 +1237,13 @@ namespace
 
     int getTouchedKey(float x, float y)
     {
+        // Botón DEL de la barra de herramientas.
+        if (y >= 3.0f && y <= 22.0f &&
+            x >= 274.0f && x <= 317.0f)
+        {
+            return 103;
+        }
+
         if (y >= 188.0f && y <= 216.0f)
         {
             if (x >= 5.0f && x <= 48.0f)
@@ -978,6 +1290,12 @@ namespace
         if (keyIndex == 102)
         {
             increaseIndent();
+            return;
+        }
+
+        if (keyIndex == 103)
+        {
+            backspace();
             return;
         }
 
@@ -1093,8 +1411,17 @@ bool Editor_Init(
     capsLock = false;
     pendingDeadKey.clear();
 
+    hasSelection = false;
+    selectionAnchor = 0;
+
+    clipboard.clear();
+
+    undoHistory.clear();
+    redoHistory.clear();
+
     lastLPress = 0;
     nextRepeatTime = 0;
+    nextPhysicalRepeat = 0;
     activeTouchKey = -1;
 
     buildVisualLines();
@@ -1113,6 +1440,9 @@ void Editor_Run()
 
         const bool shift = (held & KEY_L) != 0;
         const bool altGr = (held & KEY_ZL) != 0;
+        const bool selecting = (held & KEY_SELECT) != 0;
+
+        const u64 now = osGetTime();
 
         if (pressed & KEY_START)
             break;
@@ -1120,8 +1450,6 @@ void Editor_Run()
         // Doble pulsación de L: bloqueo de mayúsculas.
         if (pressed & KEY_L)
         {
-            const u64 now = osGetTime();
-
             if (lastLPress != 0 &&
                 now - lastLPress <= CAPS_DOUBLE_PRESS_MS)
             {
@@ -1134,17 +1462,79 @@ void Editor_Run()
             }
         }
 
+        // Copiar y cortar.
+        if ((pressed & KEY_Y) && shift)
+            cutSelection();
+        else if (pressed & KEY_Y)
+            copySelection();
+
+        // Pegar. L+A queda reservado para pegar sin formato
+        // cuando se incorpore el sistema de estilos.
+        if (pressed & KEY_A)
+            pasteClipboard();
+
+        // Deshacer y rehacer.
+        if ((pressed & KEY_B) && altGr)
+            redoAction();
+        else if ((pressed & KEY_B) && shift)
+            undoAction(5);
+        else if (pressed & KEY_B)
+            undoAction(1);
+
+        // Navegación y selección.
         if (pressed & KEY_LEFT)
-            moveCursorHorizontal(-1);
+            moveCursorHorizontal(-1, selecting);
 
         if (pressed & KEY_RIGHT)
-            moveCursorHorizontal(1);
+            moveCursorHorizontal(1, selecting);
 
         if (pressed & KEY_UP)
-            moveCursorVertical(-1);
+            moveCursorVertical(-1, selecting);
 
         if (pressed & KEY_DOWN)
-            moveCursorVertical(1);
+            moveCursorVertical(1, selecting);
+
+        // R: salto de línea.
+        // L+R: separación de párrafo.
+        // ZL+R: salto de página.
+        if (pressed & KEY_R)
+        {
+            if (altGr)
+                insertPageBreak();
+            else if (shift)
+                insertParagraphBreak();
+            else
+                insertLineBreak();
+        }
+
+        // ZR: retroceso continuo.
+        // L+ZR: borrar palabra.
+        // ZL+ZR: borrar línea.
+        const bool eraseHeld = (held & KEY_ZR) != 0;
+        const bool erasePressed = (pressed & KEY_ZR) != 0;
+
+        if (erasePressed)
+        {
+            nextPhysicalRepeat = now + PHYSICAL_REPEAT_DELAY;
+
+            if (altGr)
+                deleteLine();
+            else if (shift)
+                deleteWord();
+            else
+                backspace();
+        }
+        else if (eraseHeld && now >= nextPhysicalRepeat)
+        {
+            if (altGr)
+                deleteLine();
+            else if (shift)
+                deleteWord();
+            else
+                backspace();
+
+            nextPhysicalRepeat = now + PHYSICAL_REPEAT_INTERVAL;
+        }
 
         processTouch(shift, altGr);
 
@@ -1162,4 +1552,13 @@ void Editor_Fini()
 
     topScreen = nullptr;
     bottomScreen = nullptr;
+
+    document.clear();
+    visualLines.clear();
+
+    undoHistory.clear();
+    redoHistory.clear();
+
+    clipboard.clear();
+    pendingDeadKey.clear();
 }
