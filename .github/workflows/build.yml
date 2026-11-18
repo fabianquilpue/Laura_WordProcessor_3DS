@@ -19,21 +19,42 @@ jobs:
 
     container:
       image: devkitpro/devkitarm:latest
-      options: --user 1001
 
     steps:
       - name: Descargar repositorio
         uses: actions/checkout@v4
 
-      - name: Comprobar estructura
+      - name: Comprobar entorno devkitPro
+        run: |
+          echo "DEVKITPRO=$DEVKITPRO"
+          echo "DEVKITARM=$DEVKITARM"
+          test -f "$DEVKITARM/3ds_rules"
+          arm-none-eabi-g++ --version
+          make --version
+
+      - name: Comprobar estructura del proyecto
         run: |
           test -f Makefile
           test -f source/main.cpp
           test -f assets/icon.png
+          test -f assets/splash.png
           test -d romfs
+          echo "Estructura del proyecto correcta."
+
+      - name: Comprobar objetivos de compilacion
+        run: |
+          make -qp | grep -q '^all:'
+          echo "Objetivo all encontrado."
 
       - name: Compilar Laura
-        run: make -j$(nproc --all)
+        run: make -j2
+
+      - name: Comprobar archivos compilados
+        run: |
+          test -f Laura.3dsx
+          test -f Laura.smdh
+          test -f Laura.elf
+          echo "Los archivos de Laura fueron generados."
 
       - name: Publicar archivos compilados
         uses: actions/upload-artifact@v4
