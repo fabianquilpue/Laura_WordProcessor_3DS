@@ -34,6 +34,7 @@ jobs:
           echo "Rama: $GITHUB_REF_NAME"
           echo "Run: $GITHUB_RUN_NUMBER"
 
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
           git log -1 --oneline
 
           echo "======================================"
