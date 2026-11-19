@@ -1,4 +1,3 @@
-
 #include "editor.hpp"
 
 #include <3ds.h>
@@ -8,6 +7,7 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <map>
 #include <string>
 #include <utility>
 #include <vector>
@@ -23,11 +23,12 @@ namespace
     constexpr float TEXT_Y = 29.0f;
     constexpr float TEXT_SCALE = 0.48f;
     constexpr float LINE_HEIGHT = 12.5f;
+    constexpr float INDENT_WIDTH = 12.0f;
 
     constexpr int MAX_LINE_CHARACTERS = 43;
     constexpr int VISIBLE_LINES = 15;
+    constexpr int MAX_INDENT_LEVEL = 8;
 
-    // Teclado compacto, adaptado a la pantalla inferior de 320 px.
     constexpr float KEY_MARGIN = 5.0f;
     constexpr float KEY_GAP = 1.0f;
     constexpr float KEY_WIDTH = 30.0f;
@@ -88,6 +89,15 @@ namespace
 
     std::vector<std::pair<std::size_t, std::size_t>> visualLines;
 
+    /*
+     * La sangría se almacena como metadato.
+     *
+     * Cada entrada relaciona la posición inicial de un párrafo
+     * con su nivel de sangría. No se insertan espacios artificiales
+     * en el texto del documento.
+     */
+    std::map<std::size_t, int> paragraphIndents;
+
     bool capsLock = false;
     std::string pendingDeadKey;
 
@@ -110,6 +120,7 @@ namespace
         std::size_t cursor;
         std::size_t anchor;
         bool selection;
+        std::map<std::size_t, int> paragraphIndents;
     };
 
     std::vector<EditorSnapshot> undoHistory;
@@ -211,7 +222,9 @@ namespace
 
         while (position < text.size() &&
                (static_cast<unsigned char>(text[position]) & 0xC0) == 0x80)
+        {
             ++position;
+        }
 
         return position;
     }
@@ -227,7 +240,9 @@ namespace
 
         while (position > 0 &&
                (static_cast<unsigned char>(text[position]) & 0xC0) == 0x80)
+        {
             --position;
+        }
 
         return position;
     }
@@ -246,6 +261,115 @@ namespace
         }
 
         return count;
+    }
+
+    /*
+     * Devuelve el comienzo del párrafo que contiene una posición.
+     */
+    std::size_t getParagraphStart(std::size_t position)
+    {
+        if (position > document.size())
+            position = document.size();
+
+        if (position == 0)
+            return 0;
+
+        const std::size_t newline =
+            document.rfind('\n', position - 1);
+
+        return newline == std::string::npos ? 0 : newline + 1;
+    }
+
+    int getParagraphIndent(std::size_t position)
+    {
+        const std::size_t paragraphStart =
+            getParagraphStart(position);
+
+        auto it = paragraphIndents.upper_bound(paragraphStart);
+
+        if (it == paragraphIndents.begin())
+            return 0;
+
+        --it;
+        return it->second;
+    }
+
+    /*
+     * Inserción centralizada: actualiza también las posiciones
+     * de los metadatos de párrafo.
+     */
+    void insertDocumentText(
+        std::size_t position,
+        const std::string& value)
+    {
+        if (value.empty())
+            return;
+
+        if (position > document.size())
+            position = document.size();
+
+        const int inheritedIndent =
+            getParagraphIndent(position);
+
+        std::map<std::size_t, int> updated;
+
+        for (const auto& entry : paragraphIndents)
+        {
+            std::size_t key = entry.first;
+
+            if (key > position)
+                key += value.size();
+
+            updated[key] = entry.second;
+        }
+
+        document.insert(position, value);
+
+        for (std::size_t i = 0; i < value.size(); ++i)
+        {
+            if (value[i] == '\n')
+                updated[position + i + 1] = inheritedIndent;
+        }
+
+        paragraphIndents.swap(updated);
+    }
+
+    /*
+     * Eliminación centralizada: elimina metadatos de párrafos
+     * que desaparecen y desplaza los posteriores.
+     */
+    void eraseDocumentText(
+        std::size_t position,
+        std::size_t length)
+    {
+        if (length == 0 || position >= document.size())
+            return;
+
+        length = std::min(length, document.size() - position);
+
+        const std::size_t end = position + length;
+
+        std::map<std::size_t, int> updated;
+
+        for (const auto& entry : paragraphIndents)
+        {
+            const std::size_t key = entry.first;
+
+            if (key > position && key <= end)
+                continue;
+
+            if (key > end)
+                updated[key - length] = entry.second;
+            else
+                updated[key] = entry.second;
+        }
+
+        document.erase(position, length);
+
+        if (updated.find(0) == updated.end())
+            updated[0] = 0;
+
+        paragraphIndents.swap(updated);
     }
 
     void buildVisualLines()
@@ -292,7 +416,9 @@ namespace
         {
             if (cursorPosition >= visualLines[i].first &&
                 cursorPosition <= visualLines[i].second)
+            {
                 return i;
+            }
         }
 
         return visualLines.empty() ? 0 : visualLines.size() - 1;
@@ -339,7 +465,7 @@ namespace
         const std::size_t start = selectionStart();
         const std::size_t end = selectionEnd();
 
-        document.erase(start, end - start);
+        eraseDocumentText(start, end - start);
         cursorPosition = start;
 
         clearSelection();
@@ -351,7 +477,8 @@ namespace
             document,
             cursorPosition,
             selectionAnchor,
-            hasSelection
+            hasSelection,
+            paragraphIndents
         });
 
         if (undoHistory.size() > MAX_HISTORY)
@@ -366,6 +493,10 @@ namespace
         cursorPosition = std::min(snapshot.cursor, document.size());
         selectionAnchor = std::min(snapshot.anchor, document.size());
         hasSelection = snapshot.selection;
+        paragraphIndents = snapshot.paragraphIndents;
+
+        if (paragraphIndents.empty())
+            paragraphIndents[0] = 0;
 
         pendingDeadKey.clear();
 
@@ -381,7 +512,8 @@ namespace
                 document,
                 cursorPosition,
                 selectionAnchor,
-                hasSelection
+                hasSelection,
+                paragraphIndents
             });
 
             const EditorSnapshot previous = undoHistory.back();
@@ -400,7 +532,8 @@ namespace
             document,
             cursorPosition,
             selectionAnchor,
-            hasSelection
+            hasSelection,
+            paragraphIndents
         });
 
         const EditorSnapshot next = redoHistory.back();
@@ -419,7 +552,7 @@ namespace
         if (hasSelection)
             deleteSelection();
 
-        document.insert(cursorPosition, value);
+        insertDocumentText(cursorPosition, value);
         cursorPosition += value.size();
 
         clearSelection();
@@ -519,7 +652,7 @@ namespace
 
         pushUndo();
 
-        document.erase(previous, cursorPosition - previous);
+        eraseDocumentText(previous, cursorPosition - previous);
         cursorPosition = previous;
 
         clearSelection();
@@ -532,33 +665,44 @@ namespace
         insertCharacter("\t");
     }
 
+    /*
+     * Aumenta la sangría del párrafo completo.
+     * No modifica el contenido textual.
+     */
     void increaseIndent()
     {
-        if (hasSelection)
+        const std::size_t paragraphStart =
+            getParagraphStart(cursorPosition);
+
+        pushUndo();
+
+        int& indent = paragraphIndents[paragraphStart];
+
+        if (indent < MAX_INDENT_LEVEL)
+            ++indent;
+
+        buildVisualLines();
+        updateScroll();
+    }
+
+    /*
+     * RESET:
+     * elimina la sangría del párrafo actual y de todos los
+     * párrafos posteriores. Los párrafos anteriores no cambian.
+     */
+    void resetIndent()
+    {
+        const std::size_t paragraphStart =
+            getParagraphStart(cursorPosition);
+
+        pushUndo();
+
+        for (auto& entry : paragraphIndents)
         {
-            pushUndo();
-            deleteSelection();
-        }
-        else
-        {
-            pushUndo();
+            if (entry.first >= paragraphStart)
+                entry.second = 0;
         }
 
-        const std::size_t lineStart =
-            document.rfind(
-                '\n',
-                cursorPosition == 0 ? 0 : cursorPosition - 1
-            );
-
-        const std::size_t insertionPosition =
-            lineStart == std::string::npos ? 0 : lineStart + 1;
-
-        document.insert(insertionPosition, "    ");
-
-        if (cursorPosition >= insertionPosition)
-            cursorPosition += 4;
-
-        clearSelection();
         buildVisualLines();
         updateScroll();
     }
@@ -592,6 +736,14 @@ namespace
             insertText(clipboard);
     }
 
+    /*
+     * WORD:
+     * primero atraviesa espacios, tabulaciones y saltos de línea
+     * anteriores; después elimina la palabra precedente.
+     *
+     * Así, las repeticiones consecutivas no quedan detenidas
+     * al encontrar un espacio.
+     */
     void deleteWord()
     {
         if (hasSelection)
@@ -614,9 +766,32 @@ namespace
                 const std::string character =
                     document.substr(previous, start - previous);
 
-                if (character == " " || character == "\n" ||
-                    character == "\t" || character == "\f")
+                if (character != " " &&
+                    character != "\n" &&
+                    character != "\t" &&
+                    character != "\f")
+                {
                     break;
+                }
+
+                start = previous;
+            }
+
+            while (start > 0)
+            {
+                const std::size_t previous =
+                    previousUTF8(document, start);
+
+                const std::string character =
+                    document.substr(previous, start - previous);
+
+                if (character == " " ||
+                    character == "\n" ||
+                    character == "\t" ||
+                    character == "\f")
+                {
+                    break;
+                }
 
                 start = previous;
             }
@@ -625,7 +800,8 @@ namespace
                 return;
 
             pushUndo();
-            document.erase(start, cursorPosition - start);
+
+            eraseDocumentText(start, cursorPosition - start);
             cursorPosition = start;
             clearSelection();
         }
@@ -634,6 +810,15 @@ namespace
         updateScroll();
     }
 
+    /*
+     * LINE:
+     * elimina hacia atrás hasta el comienzo de la línea.
+     *
+     * Si el cursor ya está al comienzo, elimina el salto de línea
+     * anterior. De este modo, la siguiente repetición continúa
+     * sobre la línea precedente, incluso si la línea actual
+     * estaba vacía.
+     */
     void deleteLine()
     {
         if (hasSelection)
@@ -643,29 +828,45 @@ namespace
         }
         else
         {
-            const std::size_t lineStart =
-                document.rfind(
-                    '\n',
-                    cursorPosition == 0 ? 0 : cursorPosition - 1
-                );
-
-            const std::size_t start =
-                lineStart == std::string::npos ? 0 : lineStart + 1;
-
-            std::size_t end = document.find('\n', cursorPosition);
-
-            if (end == std::string::npos)
-                end = document.size();
-            else
-                ++end;
-
-            if (start == end)
+            if (cursorPosition == 0)
                 return;
 
-            pushUndo();
-            document.erase(start, end - start);
-            cursorPosition = start;
-            clearSelection();
+            const std::size_t lineStart =
+                getParagraphStart(cursorPosition);
+
+            if (cursorPosition > lineStart)
+            {
+                pushUndo();
+
+                eraseDocumentText(
+                    lineStart,
+                    cursorPosition - lineStart
+                );
+
+                cursorPosition = lineStart;
+                clearSelection();
+            }
+            else
+            {
+                /*
+                 * El cursor está al comienzo del párrafo.
+                 * Elimina el separador anterior para unirlo
+                 * con el párrafo precedente.
+                 */
+                const std::size_t separator = lineStart - 1;
+
+                if (document[separator] != '\n' &&
+                    document[separator] != '\f')
+                {
+                    return;
+                }
+
+                pushUndo();
+
+                eraseDocumentText(separator, 1);
+                cursorPosition = separator;
+                clearSelection();
+            }
         }
 
         buildVisualLines();
@@ -784,7 +985,9 @@ namespace
 
             if (character == " " || character == "\n" ||
                 character == "\t" || character == "\f")
+            {
                 break;
+            }
 
             start = previous;
         }
@@ -798,7 +1001,9 @@ namespace
 
             if (character == " " || character == "\n" ||
                 character == "\t" || character == "\f")
+            {
                 break;
+            }
 
             end = next;
         }
@@ -905,6 +1110,15 @@ namespace
             const std::string line =
                 document.substr(start, end - start);
 
+            const int indentLevel =
+                getParagraphIndent(start);
+
+            const float lineX =
+                TEXT_X + indentLevel * INDENT_WIDTH;
+
+            const float lineY =
+                TEXT_Y + static_cast<float>(i) * LINE_HEIGHT;
+
             if (hasSelection)
             {
                 const std::size_t overlapStart =
@@ -925,8 +1139,8 @@ namespace
                         );
 
                     C2D_DrawRectSolid(
-                        TEXT_X + measureTextWidth(prefix),
-                        TEXT_Y + static_cast<float>(i) * LINE_HEIGHT,
+                        lineX + measureTextWidth(prefix),
+                        lineY,
                         0.4f,
                         measureTextWidth(selected),
                         11.0f,
@@ -939,8 +1153,8 @@ namespace
             {
                 drawText(
                     line.c_str(),
-                    TEXT_X,
-                    TEXT_Y + static_cast<float>(i) * LINE_HEIGHT,
+                    lineX,
+                    lineY,
                     TEXT_SCALE,
                     COLOR_CARBON
                 );
@@ -952,9 +1166,9 @@ namespace
             {
                 drawText(
                     document[end] == '\f' ? "¶" : "·",
-                    TEXT_X + measureTextWidth(line),
-                    TEXT_Y + static_cast<float>(i) * LINE_HEIGHT,
-                    0.35f,
+                    lineX + measureTextWidth(line) + 1.0f,
+                    lineY - 0.5f,
+                    0.48f,
                     COLOR_MUSGO
                 );
             }
@@ -970,7 +1184,11 @@ namespace
             const std::string prefix =
                 document.substr(start, cursorPosition - start);
 
-            const float cursorX = TEXT_X + measureTextWidth(prefix);
+            const float lineX =
+                TEXT_X + getParagraphIndent(start) * INDENT_WIDTH;
+
+            const float cursorX =
+                lineX + measureTextWidth(prefix);
 
             const float cursorY =
                 TEXT_Y +
@@ -1071,10 +1289,13 @@ namespace
         return shift ? key.shift : key.base;
     }
 
-    void drawToolbar()
+    void drawToolbar(bool shift, bool altGr)
     {
+        const char* deleteLabel =
+            altGr ? "LINE" : (shift ? "WORD" : "DEL");
+
         const char* labels[] = {
-            "N", "K", "S", "Alin.", "Aa", "¶", "DEL"
+            "N", "K", "S", "Alin.", "Aa", "¶", deleteLabel
         };
 
         const bool active[] = {
@@ -1103,7 +1324,7 @@ namespace
                 },
                 labels[i],
                 active[i],
-                i == 3 ? 0.34f : 0.42f
+                i == 3 ? 0.34f : (i == 6 ? 0.32f : 0.42f)
             );
         }
     }
@@ -1164,9 +1385,28 @@ namespace
             "->|", false, 0.40f
         );
 
+        const char* spaceLabel = "ESPACIO";
+        float spaceScale = 0.43f;
+
+        if (shift && altGr)
+        {
+            spaceLabel = "RESET";
+            spaceScale = 0.43f;
+        }
+        else if (altGr)
+        {
+            spaceLabel = "SANGRIA";
+            spaceScale = 0.39f;
+        }
+        else if (shift)
+        {
+            spaceLabel = "TAB";
+            spaceScale = 0.48f;
+        }
+
         drawKey(
             {50.0f, 174.0f, 220.0f, 27.0f},
-            "ESPACIO", false, 0.43f
+            spaceLabel, false, spaceScale
         );
 
         drawKey(
@@ -1183,7 +1423,7 @@ namespace
 
     void drawBottomScreen(bool shift, bool altGr)
     {
-        drawToolbar();
+        drawToolbar(shift, altGr);
         drawWordPreview();
         drawKeyboard(shift, altGr);
 
@@ -1202,13 +1442,6 @@ namespace
 
         drawPage();
         drawDocument();
-        drawText(
-    "EDITOR ACTIVO - PRUEBA 01",
-    105.0f,
-    222.0f,
-    0.35f,
-    COLOR_MUSGO
-);
 
         C2D_TargetClear(bottomScreen, COLOR_CREMA);
         C2D_SceneBegin(bottomScreen);
@@ -1222,7 +1455,9 @@ namespace
     {
         if (y >= 3.0f && y <= 22.0f &&
             x >= 274.0f && x <= 317.0f)
+        {
             return 103;
+        }
 
         if (y >= 3.0f && y <= 22.0f)
         {
@@ -1249,7 +1484,9 @@ namespace
 
                 if (x >= rect.x && x <= rect.x + rect.width &&
                     y >= rect.y && y <= rect.y + rect.height)
+                {
                     return row * 10 + column;
+                }
             }
         }
 
@@ -1306,7 +1543,15 @@ namespace
 
         if (keyIndex == 101)
         {
-            insertCharacter(" ");
+            if (shift && altGr)
+                resetIndent();
+            else if (altGr)
+                increaseIndent();
+            else if (shift)
+                insertTab();
+            else
+                insertCharacter(" ");
+
             return;
         }
 
@@ -1318,7 +1563,13 @@ namespace
 
         if (keyIndex == 103)
         {
-            backspace();
+            if (altGr)
+                deleteLine();
+            else if (shift)
+                deleteWord();
+            else
+                backspace();
+
             return;
         }
 
@@ -1401,8 +1652,10 @@ namespace
         }
         else if (now >= nextRepeatTime)
         {
-            // Evitar repetir acciones de alternancia al mantener
-            // pulsado un botón de la barra de herramientas.
+            /*
+             * Las teclas de texto y DEL se repiten.
+             * Los botones de alternancia de la barra no.
+             */
             if (activeTouchKey < 100 || activeTouchKey == 103)
             {
                 activateKeyboardKey(
@@ -1435,6 +1688,9 @@ bool Editor_Init(
     document.clear();
     cursorPosition = 0;
     firstVisibleLine = 0;
+
+    paragraphIndents.clear();
+    paragraphIndents[0] = 0;
 
     capsLock = false;
     pendingDeadKey.clear();
@@ -1581,6 +1837,7 @@ void Editor_Fini()
 
     document.clear();
     visualLines.clear();
+    paragraphIndents.clear();
 
     undoHistory.clear();
     redoHistory.clear();
