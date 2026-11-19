@@ -1,4 +1,3 @@
-
 #include "editor.hpp"
 
 #include <3ds.h>
@@ -27,7 +26,7 @@ namespace
     constexpr int MAX_INDENT_LEVEL = 8;
 
     constexpr float KEY_WIDTH = 24.0f, KEY_HEIGHT = 17.0f;
-    constexpr float KEY_GAP = 1.0f, KEY_START_X = 40.0f;
+    constexpr float KEY_GAP = 0.0f, KEY_START_X = 28.0f;
     constexpr float KEY_START_Y = 88.0f, KEY_ROW_STEP = 18.0f;
 
     constexpr u64 CURSOR_BLINK_INTERVAL = 500;
@@ -45,6 +44,7 @@ namespace
     constexpr u32 COLOR_TECLA = C2D_Color32(248,247,241,255);
     constexpr u32 COLOR_TECLA_SUPERIOR = C2D_Color32(255,255,252,255);
     constexpr u32 COLOR_TECLA_ACTIVA = C2D_Color32(133,164,141,255);
+    constexpr u32 COLOR_TECLA_SOMBRA = C2D_Color32(205,204,195,255);
     constexpr u32 COLOR_SECUNDARIO = C2D_Color32(130,130,120,255);
     constexpr u32 COLOR_SELECCION = C2D_Color32(190,211,195,255);
 
@@ -952,16 +952,23 @@ namespace
         pushUndo();
 
         if(!hasSelection)
+        {
             paragraphAlignments[getParagraphStart(cursorPosition)]=next;
+        }
         else
         {
             const std::size_t a=getParagraphStart(selectionStart());
-            const std::size_t b=getParagraphEnd(selectionEnd());
+            const std::size_t b=getParagraphStart(selectionEnd());
 
-            paragraphAlignments[a]=next;
-            for(auto& e:paragraphAlignments)
-                if(e.first>=a&&e.first<=b)
-                    e.second=next;
+            for(std::size_t p=a;p<=b;)
+            {
+                if(p==b&&b>a&&selectionEnd()==b) break;
+                paragraphAlignments[p]=next;
+
+                const std::size_t end=getParagraphEnd(p);
+                if(end>=document.size()) break;
+                p=end+1;
+            }
         }
 
         markModified();
@@ -974,22 +981,30 @@ namespace
 
         int index=0;
         for(int i=0;i<4;++i)
-            if(values[i]==current) index=i;
+            if(std::abs(values[i]-current)<0.001f)
+                index=i;
 
         const float next=values[(index+1)%4];
         pushUndo();
 
         if(!hasSelection)
+        {
             paragraphLineSpacing[getParagraphStart(cursorPosition)]=next;
+        }
         else
         {
             const std::size_t a=getParagraphStart(selectionStart());
-            const std::size_t b=getParagraphEnd(selectionEnd());
+            const std::size_t b=getParagraphStart(selectionEnd());
 
-            paragraphLineSpacing[a]=next;
-            for(auto& e:paragraphLineSpacing)
-                if(e.first>=a&&e.first<=b)
-                    e.second=next;
+            for(std::size_t p=a;p<=b;)
+            {
+                if(p==b&&b>a&&selectionEnd()==b) break;
+                paragraphLineSpacing[p]=next;
+
+                const std::size_t end=getParagraphEnd(p);
+                if(end>=document.size()) break;
+                p=end+1;
+            }
         }
 
         buildVisualLines();
@@ -1281,10 +1296,30 @@ namespace
     void drawKey(const KeyRect&r,const char*label,bool active=false,float scale=0.48f)
     {
         C2D_DrawRectSolid(r.x,r.y,0.5f,r.width,r.height,COLOR_TECLA_BORDE);
-        C2D_DrawRectSolid(r.x+0.65f,r.y+0.65f,0.6f,r.width-1.3f,r.height-1.3f,
-                          active?COLOR_TECLA_ACTIVA:COLOR_TECLA);
-        C2D_DrawRectSolid(r.x+1.3f,r.y+1.3f,0.7f,r.width-2.6f,1.0f,
-                          COLOR_TECLA_SUPERIOR);
+
+        C2D_DrawRectSolid(
+            r.x+0.65f,r.y+0.65f,0.6f,
+            r.width-1.3f,r.height-1.3f,
+            active?COLOR_TECLA_ACTIVA:COLOR_TECLA
+        );
+
+        C2D_DrawRectSolid(
+            r.x+1.3f,r.y+1.3f,0.7f,
+            r.width-2.6f,1.0f,
+            COLOR_TECLA_SUPERIOR
+        );
+
+        C2D_DrawRectSolid(
+            r.x+1.3f,r.y+r.height-2.0f,0.75f,
+            r.width-2.6f,0.7f,
+            COLOR_TECLA_SOMBRA
+        );
+
+        C2D_DrawRectSolid(
+            r.x+1.3f,r.y+1.3f,0.75f,
+            0.7f,r.height-2.6f,
+            COLOR_TECLA_SUPERIOR
+        );
 
         if(label&&label[0])
         {
@@ -1326,10 +1361,11 @@ namespace
 
         for(int i=0;i<3;++i)
         {
-            const float w=widths[getParagraphAlignment(cursorPosition)][i];
-            const float px=getParagraphAlignment(cursorPosition)==0?x:
-                           getParagraphAlignment(cursorPosition)==1?x+21-w:
-                           x+(21-w)*0.5f;
+            const int alignment=getParagraphAlignment(cursorPosition);
+            const float w=widths[alignment][i];
+            const float px=alignment==0?x:
+                           alignment==1?x+21-w:
+                           alignment==2?x+(21-w)*0.5f:x;
 
             C2D_DrawRectSolid(px,y+i*4.0f,0.8f,w,1.5f,COLOR_CARBON);
         }
@@ -1354,12 +1390,15 @@ namespace
             if(i==4)
             {
                 char spacing[8];
-                std::snprintf(spacing,sizeof(spacing),"%.1f",getParagraphSpacing(cursorPosition));
-                drawText(spacing,x+8.0f,7.0f,0.38f,COLOR_CARBON);
+                std::snprintf(
+                    spacing,sizeof(spacing),"%.1f",
+                    getParagraphSpacing(cursorPosition)
+                );
+                drawText(spacing,x+9.0f,7.0f,0.40f,COLOR_CARBON);
             }
 
             if(i==5)
-                drawText("Aa",x+10.0f,7.0f,0.40f,COLOR_CARBON);
+                drawText("Aa",x+9.0f,6.5f,0.46f,COLOR_CARBON);
         }
     }
 
@@ -1377,12 +1416,16 @@ namespace
     void drawEnterKey(bool shift,bool alt)
     {
         const char* label=alt?"PAG":(shift?"PAR":"ENT");
-        const KeyRect r={292.0f,KEY_START_Y+KEY_ROW_STEP,27.0f,
+        const KeyRect r={268.0f,KEY_START_Y+KEY_ROW_STEP,27.0f,
                          KEY_HEIGHT*2.0f+1.0f};
 
         C2D_DrawRectSolid(r.x,r.y,0.5f,r.width,r.height,COLOR_TECLA_BORDE);
         C2D_DrawRectSolid(r.x+0.7f,r.y+0.7f,0.6f,r.width-1.4f,r.height-1.4f,
                           activeTouchKey==104?COLOR_TECLA_ACTIVA:COLOR_TECLA);
+        C2D_DrawRectSolid(r.x+1.3f,r.y+1.3f,0.7f,r.width-2.6f,1.0f,
+                          COLOR_TECLA_SUPERIOR);
+        C2D_DrawRectSolid(r.x+1.3f,r.y+r.height-2.0f,0.75f,
+                          r.width-2.6f,0.7f,COLOR_TECLA_SOMBRA);
 
         const float scale=0.34f;
         const float letterY=r.y+5.0f;
@@ -1412,7 +1455,7 @@ namespace
         }
 
         drawKey(
-            {292.0f,KEY_START_Y,27.0f,KEY_HEIGHT},
+            {268.0f,KEY_START_Y,27.0f,KEY_HEIGHT},
             "DEL",
             activeTouchKey==103,
             0.34f
@@ -1425,7 +1468,7 @@ namespace
                           (shift?"TAB":"ESPACIO"));
 
         drawKey(
-            {40.0f,185.0f,240.0f,27.0f},
+            {KEY_START_X,185.0f,240.0f,27.0f},
             label,
             activeTouchKey==101,
             0.48f
@@ -1504,8 +1547,6 @@ namespace
         std::strftime(clock,sizeof(clock),"%H:%M",&localTime);
         std::strftime(modifiedDate,sizeof(modifiedDate),"%d/%m/%y, %H:%M",&modifiedTime);
 
-        // PTMU_GetBatteryLevel entrega un nivel de 0 a 5.
-        // Se representa en saltos aproximados de 20%.
         u8 batteryLevel=0;
         PTMU_GetBatteryLevel(&batteryLevel);
         const int batteryPercent=std::min(100,static_cast<int>(batteryLevel)*20);
@@ -1577,15 +1618,15 @@ namespace
                     return 110+i;
         }
 
-        if(y>=KEY_START_Y&&y<=KEY_START_Y+KEY_HEIGHT&&x>=292&&x<=319)
+        if(y>=KEY_START_Y&&y<=KEY_START_Y+KEY_HEIGHT&&x>=268&&x<=295)
             return 103;
 
         if(y>=KEY_START_Y+KEY_ROW_STEP&&
            y<=KEY_START_Y+KEY_ROW_STEP+KEY_HEIGHT*2+1&&
-           x>=292&&x<=319)
+           x>=268&&x<=295)
             return 104;
 
-        if(y>=185&&y<=212&&x>=40&&x<=280)
+        if(y>=185&&y<=212&&x>=KEY_START_X&&x<=KEY_START_X+240)
             return 101;
 
         for(int r=0;r<5;++r)
