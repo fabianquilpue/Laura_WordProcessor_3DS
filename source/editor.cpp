@@ -1,4 +1,3 @@
-
 #include "editor.hpp"
 
 #include <3ds.h>
@@ -774,16 +773,23 @@ namespace
         C2D_TextParse(&t,textBuffer,s);
         C2D_TextOptimize(&t);
 
-        C3D_Mtx matrix;
-        C3D_Mtx_Identity(&matrix);
+        C3D_Mtx previousMatrix;
 
-        // Inclinación horizontal de los glifos.
-        matrix.r[0][1]=-0.22f;
+        // Guardar la transformación actual de Citro2D.
+        C2D_ViewSave(&previousMatrix);
 
-        C2D_DrawTextMtx(
+        // Trasladar el origen al punto donde comienza el carácter.
+        C2D_ViewTranslate(x,y);
+
+        // Inclinar horizontalmente los glifos para representar cursiva.
+        C2D_ViewShear(-0.22f,0.0f);
+
+        // Devolver el origen a su posición original.
+        C2D_ViewTranslate(-x,-y);
+
+        C2D_DrawText(
             &t,
             C2D_WithColor,
-            &matrix,
             x,
             y,
             0.5f,
@@ -791,6 +797,12 @@ namespace
             scale,
             color
         );
+
+        // Asegurar que el texto transformado se procese antes de restaurar.
+        C2D_Flush();
+
+        // Restaurar la transformación previa para no afectar otros elementos.
+        C2D_ViewRestore(&previousMatrix);
     }
 
     float measureTextWidth(const std::string& s)
