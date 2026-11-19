@@ -24,6 +24,28 @@ jobs:
       - name: Descargar repositorio
         uses: actions/checkout@v4
 
+      - name: Identificar version del codigo
+        run: |
+          echo "======================================"
+          echo "COMMIT COMPILADO"
+          echo "======================================"
+
+          echo "Commit: $GITHUB_SHA"
+          echo "Rama: $GITHUB_REF_NAME"
+          echo "Run: $GITHUB_RUN_NUMBER"
+
+          git log -1 --oneline
+
+          echo "======================================"
+          echo "HUELLAS DEL CODIGO FUENTE"
+          echo "======================================"
+
+          sha256sum \
+            source/main.cpp \
+            source/editor.cpp \
+            include/editor.hpp \
+            Makefile
+
       - name: Comprobar entorno devkitPro
         run: |
           echo "DEVKITPRO=$DEVKITPRO"
@@ -40,6 +62,8 @@ jobs:
         run: |
           test -f Makefile
           test -f source/main.cpp
+          test -f source/editor.cpp
+          test -f include/editor.hpp
           test -f assets/icon.png
           test -f assets/splash.png
           test -d romfs
@@ -47,10 +71,6 @@ jobs:
       - name: Diagnosticar hidKeysDown
         run: |
           export PATH="$DEVKITARM/bin:$DEVKITPRO/tools/bin:$PATH"
-
-          echo "======================================"
-          echo "1. Buscando macros hidKeysDown"
-          echo "======================================"
 
           printf '#include <3ds.h>\n' | \
             arm-none-eabi-g++ \
@@ -60,10 +80,6 @@ jobs:
               -I"$DEVKITPRO/libctru/include" \
               -dM -E - | grep -n 'hidKeysDown' || true
 
-          echo "======================================"
-          echo "2. Preprocesando main.cpp"
-          echo "======================================"
-
           arm-none-eabi-g++ \
             -std=gnu++17 \
             -D__3DS__ \
@@ -72,16 +88,13 @@ jobs:
             -E source/main.cpp \
             -o /tmp/laura_preprocessed.cpp
 
-          echo "======================================"
-          echo "3. Buscando declaraciones y llamadas"
-          echo "======================================"
-
           grep -n -C 3 'hidKeysDown' \
             /tmp/laura_preprocessed.cpp || true
 
       - name: Compilar Laura
         run: |
           export PATH="$DEVKITARM/bin:$DEVKITPRO/tools/bin:$PATH"
+
           make clean
           make V=1 -j1
 
@@ -91,15 +104,40 @@ jobs:
           test -f Laura.smdh
           test -f Laura.elf
 
-          echo "Los tres archivos fueron generados correctamente."
+          echo "Archivos generados correctamente."
+
+      - name: Generar identificacion de compilacion
+        run: |
+          {
+            echo "LAURA - IDENTIFICACION DE COMPILACION"
+            echo "Commit: $GITHUB_SHA"
+            echo "Rama: $GITHUB_REF_NAME"
+            echo "Run: $GITHUB_RUN_NUMBER"
+            echo "Fecha UTC: $(date -u)"
+            echo ""
+            echo "HUELLAS DEL CODIGO FUENTE"
+            sha256sum \
+              source/main.cpp \
+              source/editor.cpp \
+              include/editor.hpp \
+              Makefile
+            echo ""
+            echo "HUELLAS DE LOS EJECUTABLES"
+            sha256sum \
+              Laura.3dsx \
+              Laura.smdh \
+              Laura.elf
+          } > LAURA_BUILD_INFO.txt
+
+          cat LAURA_BUILD_INFO.txt
 
       - name: Publicar archivos compilados
         uses: actions/upload-artifact@v4
         with:
-          name: Laura-Nintendo-3DS
+          name: Laura-Nintendo-3DS-${{ github.run_number }}-${{ github.sha }}
           path: |
             Laura.3dsx
             Laura.smdh
             Laura.elf
+            LAURA_BUILD_INFO.txt
           if-no-files-found: error
-          
