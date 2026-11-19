@@ -14,8 +14,6 @@
 
 namespace
 {
-    constexpr float SCREEN_HEIGHT = 240.0f;
-
     constexpr float PAGE_X = 24.0f;
     constexpr float PAGE_Y = 12.0f;
     constexpr float PAGE_WIDTH = 352.0f;
@@ -29,12 +27,13 @@ namespace
     constexpr int MAX_LINE_CHARACTERS = 43;
     constexpr int VISIBLE_LINES = 15;
 
+    // Teclado compacto, adaptado a la pantalla inferior de 320 px.
     constexpr float KEY_MARGIN = 5.0f;
     constexpr float KEY_GAP = 1.0f;
     constexpr float KEY_WIDTH = 30.0f;
-    constexpr float KEY_HEIGHT = 25.0f;
+    constexpr float KEY_HEIGHT = 22.0f;
     constexpr float KEY_START_Y = 53.0f;
-    constexpr float KEY_ROW_STEP = 27.0f;
+    constexpr float KEY_ROW_STEP = 23.0f;
 
     constexpr u64 CURSOR_BLINK_INTERVAL = 500;
     constexpr u64 CAPS_DOUBLE_PRESS_MS = 350;
@@ -81,7 +80,6 @@ namespace
 
     C3D_RenderTarget* topScreen = nullptr;
     C3D_RenderTarget* bottomScreen = nullptr;
-
     C2D_TextBuf textBuffer = nullptr;
 
     std::string document;
@@ -97,6 +95,14 @@ namespace
     std::size_t selectionAnchor = 0;
 
     std::string clipboard;
+
+    bool boldEnabled = false;
+    bool italicEnabled = false;
+    bool underlineEnabled = false;
+    bool showParagraphMarks = false;
+    bool hudVisible = true;
+
+    int alignmentMode = 0;
 
     struct EditorSnapshot
     {
@@ -194,13 +200,6 @@ namespace
         }}
     }};
 
-    // Declaraciones anticipadas.
-    void insertCharacter(const std::string& value);
-    void buildVisualLines();
-    void updateScroll();
-    void deleteSelection();
-    void clearSelection();
-
     std::size_t nextUTF8(
         const std::string& text,
         std::size_t position)
@@ -212,9 +211,7 @@ namespace
 
         while (position < text.size() &&
                (static_cast<unsigned char>(text[position]) & 0xC0) == 0x80)
-        {
             ++position;
-        }
 
         return position;
     }
@@ -230,9 +227,7 @@ namespace
 
         while (position > 0 &&
                (static_cast<unsigned char>(text[position]) & 0xC0) == 0x80)
-        {
             --position;
-        }
 
         return position;
     }
@@ -297,9 +292,7 @@ namespace
         {
             if (cursorPosition >= visualLines[i].first &&
                 cursorPosition <= visualLines[i].second)
-            {
                 return i;
-            }
         }
 
         return visualLines.empty() ? 0 : visualLines.size() - 1;
@@ -319,8 +312,37 @@ namespace
                 ? visualLines.size() - VISIBLE_LINES
                 : 0;
 
-        firstVisibleLine =
-            std::min(firstVisibleLine, maximumScroll);
+        firstVisibleLine = std::min(firstVisibleLine, maximumScroll);
+    }
+
+    void clearSelection()
+    {
+        hasSelection = false;
+        selectionAnchor = cursorPosition;
+    }
+
+    std::size_t selectionStart()
+    {
+        return std::min(cursorPosition, selectionAnchor);
+    }
+
+    std::size_t selectionEnd()
+    {
+        return std::max(cursorPosition, selectionAnchor);
+    }
+
+    void deleteSelection()
+    {
+        if (!hasSelection)
+            return;
+
+        const std::size_t start = selectionStart();
+        const std::size_t end = selectionEnd();
+
+        document.erase(start, end - start);
+        cursorPosition = start;
+
+        clearSelection();
     }
 
     void pushUndo()
@@ -341,15 +363,9 @@ namespace
     void restoreSnapshot(const EditorSnapshot& snapshot)
     {
         document = snapshot.document;
-        cursorPosition = snapshot.cursor;
-        selectionAnchor = snapshot.anchor;
+        cursorPosition = std::min(snapshot.cursor, document.size());
+        selectionAnchor = std::min(snapshot.anchor, document.size());
         hasSelection = snapshot.selection;
-
-        if (cursorPosition > document.size())
-            cursorPosition = document.size();
-
-        if (selectionAnchor > document.size())
-            selectionAnchor = document.size();
 
         pendingDeadKey.clear();
 
@@ -393,53 +409,7 @@ namespace
         restoreSnapshot(next);
     }
 
-    std::size_t selectionStart()
-    {
-        return std::min(cursorPosition, selectionAnchor);
-    }
-
-    std::size_t selectionEnd()
-    {
-        return std::max(cursorPosition, selectionAnchor);
-    }
-
-    void clearSelection()
-    {
-        hasSelection = false;
-        selectionAnchor = cursorPosition;
-    }
-
-    void deleteSelection()
-    {
-        if (!hasSelection)
-            return;
-
-        const std::size_t start = selectionStart();
-        const std::size_t end = selectionEnd();
-
-        document.erase(start, end - start);
-        cursorPosition = start;
-
-        clearSelection();
-    }
-
     void insertRaw(const std::string& value)
-    {
-        if (value.empty())
-            return;
-
-        pushUndo();
-
-        if (hasSelection)
-            deleteSelection();
-
-        document.insert(cursorPosition, value);
-        cursorPosition += value.size();
-
-        clearSelection();
-    }
-
-    void insertText(const std::string& value)
     {
         if (value.empty())
             return;
@@ -455,6 +425,11 @@ namespace
         clearSelection();
         buildVisualLines();
         updateScroll();
+    }
+
+    void insertText(const std::string& value)
+    {
+        insertRaw(value);
     }
 
     void insertCharacter(const std::string& value)
@@ -484,15 +459,12 @@ namespace
             {"´", "u", "ú"}, {"´", "A", "Á"},
             {"´", "E", "É"}, {"´", "I", "Í"},
             {"´", "O", "Ó"}, {"´", "U", "Ú"},
-
             {"¨", "u", "ü"}, {"¨", "U", "Ü"},
-
             {"`", "a", "à"}, {"`", "e", "è"},
             {"`", "i", "ì"}, {"`", "o", "ò"},
             {"`", "u", "ù"}, {"`", "A", "À"},
             {"`", "E", "È"}, {"`", "I", "Ì"},
             {"`", "O", "Ò"}, {"`", "U", "Ù"},
-
             {"^", "a", "â"}, {"^", "e", "ê"},
             {"^", "i", "î"}, {"^", "o", "ô"},
             {"^", "u", "û"}, {"^", "A", "Â"},
@@ -534,6 +506,8 @@ namespace
         {
             pushUndo();
             deleteSelection();
+            buildVisualLines();
+            updateScroll();
             return;
         }
 
@@ -549,6 +523,8 @@ namespace
         cursorPosition = previous;
 
         clearSelection();
+        buildVisualLines();
+        updateScroll();
     }
 
     void insertTab()
@@ -583,6 +559,8 @@ namespace
             cursorPosition += 4;
 
         clearSelection();
+        buildVisualLines();
+        updateScroll();
     }
 
     void copySelection()
@@ -604,6 +582,8 @@ namespace
         copySelection();
         pushUndo();
         deleteSelection();
+        buildVisualLines();
+        updateScroll();
     }
 
     void pasteClipboard()
@@ -618,37 +598,40 @@ namespace
         {
             pushUndo();
             deleteSelection();
-            return;
         }
-
-        if (cursorPosition == 0)
-            return;
-
-        std::size_t start = cursorPosition;
-
-        while (start > 0)
+        else
         {
-            const std::size_t previous =
-                previousUTF8(document, start);
+            if (cursorPosition == 0)
+                return;
 
-            const std::string character =
-                document.substr(previous, start - previous);
+            std::size_t start = cursorPosition;
 
-            if (character == " " || character == "\n" ||
-                character == "\t" || character == "\f")
-                break;
+            while (start > 0)
+            {
+                const std::size_t previous =
+                    previousUTF8(document, start);
 
-            start = previous;
+                const std::string character =
+                    document.substr(previous, start - previous);
+
+                if (character == " " || character == "\n" ||
+                    character == "\t" || character == "\f")
+                    break;
+
+                start = previous;
+            }
+
+            if (start == cursorPosition)
+                return;
+
+            pushUndo();
+            document.erase(start, cursorPosition - start);
+            cursorPosition = start;
+            clearSelection();
         }
 
-        if (start == cursorPosition)
-            return;
-
-        pushUndo();
-        document.erase(start, cursorPosition - start);
-        cursorPosition = start;
-
-        clearSelection();
+        buildVisualLines();
+        updateScroll();
     }
 
     void deleteLine()
@@ -657,33 +640,36 @@ namespace
         {
             pushUndo();
             deleteSelection();
-            return;
+        }
+        else
+        {
+            const std::size_t lineStart =
+                document.rfind(
+                    '\n',
+                    cursorPosition == 0 ? 0 : cursorPosition - 1
+                );
+
+            const std::size_t start =
+                lineStart == std::string::npos ? 0 : lineStart + 1;
+
+            std::size_t end = document.find('\n', cursorPosition);
+
+            if (end == std::string::npos)
+                end = document.size();
+            else
+                ++end;
+
+            if (start == end)
+                return;
+
+            pushUndo();
+            document.erase(start, end - start);
+            cursorPosition = start;
+            clearSelection();
         }
 
-        const std::size_t lineStart =
-            document.rfind(
-                '\n',
-                cursorPosition == 0 ? 0 : cursorPosition - 1
-            );
-
-        const std::size_t start =
-            lineStart == std::string::npos ? 0 : lineStart + 1;
-
-        std::size_t end = document.find('\n', cursorPosition);
-
-        if (end == std::string::npos)
-            end = document.size();
-        else
-            ++end;
-
-        if (start == end)
-            return;
-
-        pushUndo();
-        document.erase(start, end - start);
-        cursorPosition = start;
-
-        clearSelection();
+        buildVisualLines();
+        updateScroll();
     }
 
     void insertLineBreak()
@@ -723,6 +709,8 @@ namespace
 
         if (hasSelection && cursorPosition == selectionAnchor)
             clearSelection();
+
+        updateScroll();
     }
 
     void moveCursorVertical(int direction, bool selecting)
@@ -777,6 +765,8 @@ namespace
 
         if (hasSelection && cursorPosition == selectionAnchor)
             clearSelection();
+
+        updateScroll();
     }
 
     std::string getCurrentWord()
@@ -917,14 +907,11 @@ namespace
 
             if (hasSelection)
             {
-                const std::size_t selectedStart = selectionStart();
-                const std::size_t selectedEnd = selectionEnd();
-
                 const std::size_t overlapStart =
-                    std::max(start, selectedStart);
+                    std::max(start, selectionStart());
 
                 const std::size_t overlapEnd =
-                    std::min(end, selectedEnd);
+                    std::min(end, selectionEnd());
 
                 if (overlapStart < overlapEnd)
                 {
@@ -937,17 +924,11 @@ namespace
                             overlapEnd - overlapStart
                         );
 
-                    const float selectionX =
-                        TEXT_X + measureTextWidth(prefix);
-
-                    const float selectionWidth =
-                        measureTextWidth(selected);
-
                     C2D_DrawRectSolid(
-                        selectionX,
+                        TEXT_X + measureTextWidth(prefix),
                         TEXT_Y + static_cast<float>(i) * LINE_HEIGHT,
                         0.4f,
-                        selectionWidth,
+                        measureTextWidth(selected),
                         11.0f,
                         COLOR_SELECCION
                     );
@@ -962,6 +943,19 @@ namespace
                     TEXT_Y + static_cast<float>(i) * LINE_HEIGHT,
                     TEXT_SCALE,
                     COLOR_CARBON
+                );
+            }
+
+            if (showParagraphMarks &&
+                end < document.size() &&
+                (document[end] == '\n' || document[end] == '\f'))
+            {
+                drawText(
+                    document[end] == '\f' ? "¶" : "·",
+                    TEXT_X + measureTextWidth(line),
+                    TEXT_Y + static_cast<float>(i) * LINE_HEIGHT,
+                    0.35f,
+                    COLOR_MUSGO
                 );
             }
         }
@@ -1011,29 +1005,20 @@ namespace
         float scale = 0.48f)
     {
         C2D_DrawRectSolid(
-            rect.x,
-            rect.y,
-            0.5f,
-            rect.width,
-            rect.height,
+            rect.x, rect.y, 0.5f,
+            rect.width, rect.height,
             COLOR_TECLA_BORDE
         );
 
         C2D_DrawRectSolid(
-            rect.x + 1.0f,
-            rect.y + 1.0f,
-            0.6f,
-            rect.width - 2.0f,
-            rect.height - 2.0f,
+            rect.x + 1.0f, rect.y + 1.0f, 0.6f,
+            rect.width - 2.0f, rect.height - 2.0f,
             active ? COLOR_TECLA_ACTIVA : COLOR_TECLA
         );
 
         C2D_DrawRectSolid(
-            rect.x + 2.0f,
-            rect.y + 2.0f,
-            0.7f,
-            rect.width - 4.0f,
-            2.0f,
+            rect.x + 2.0f, rect.y + 2.0f, 0.7f,
+            rect.width - 4.0f, 2.0f,
             COLOR_TECLA_SUPERIOR
         );
 
@@ -1048,11 +1033,7 @@ namespace
             float height = 0.0f;
 
             C2D_TextGetDimensions(
-                &text,
-                scale,
-                scale,
-                &width,
-                &height
+                &text, scale, scale, &width, &height
             );
 
             C2D_DrawText(
@@ -1084,7 +1065,7 @@ namespace
             return uppercase ? key.shift : key.base;
         }
 
-        if (altGr)
+        if (altGr && key.altGr[0] != '\0')
             return key.altGr;
 
         return shift ? key.shift : key.base;
@@ -1094,6 +1075,16 @@ namespace
     {
         const char* labels[] = {
             "N", "K", "S", "Alin.", "Aa", "¶", "DEL"
+        };
+
+        const bool active[] = {
+            boldEnabled,
+            italicEnabled,
+            underlineEnabled,
+            alignmentMode != 0,
+            false,
+            showParagraphMarks,
+            false
         };
 
         constexpr float xStart = 4.0f;
@@ -1111,7 +1102,7 @@ namespace
                     height
                 },
                 labels[i],
-                false,
+                active[i],
                 i == 3 ? 0.34f : 0.42f
             );
         }
@@ -1137,9 +1128,7 @@ namespace
         {
             drawText(
                 "Palabra actual",
-                11.0f,
-                33.0f,
-                0.34f,
+                11.0f, 33.0f, 0.34f,
                 COLOR_SECUNDARIO
             );
         }
@@ -1147,9 +1136,7 @@ namespace
         {
             drawText(
                 word.c_str(),
-                11.0f,
-                32.0f,
-                0.48f,
+                11.0f, 32.0f, 0.48f,
                 COLOR_MUSGO
             );
         }
@@ -1163,66 +1150,46 @@ namespace
             {
                 const KeyDefinition& key = keyboard[row][column];
 
-                const char* label =
-                    getKeyLabel(key, shift, altGr, capsLock);
-
                 drawKey(
                     getKeyRect(row, column),
-                    label,
+                    getKeyLabel(key, shift, altGr, capsLock),
                     false,
-                    0.48f
+                    0.43f
                 );
             }
         }
 
         drawKey(
-            {5.0f, 188.0f, 43.0f, 28.0f},
-            "->|",
-            false,
-            0.42f
+            {5.0f, 174.0f, 43.0f, 27.0f},
+            "->|", false, 0.40f
         );
 
         drawKey(
-            {50.0f, 188.0f, 220.0f, 28.0f},
-            "ESPACIO",
-            false,
-            0.48f
+            {50.0f, 174.0f, 220.0f, 27.0f},
+            "ESPACIO", false, 0.43f
         );
 
         drawKey(
-            {272.0f, 188.0f, 43.0f, 28.0f},
-            "=->",
-            false,
-            0.42f
+            {272.0f, 174.0f, 43.0f, 27.0f},
+            "=->", false, 0.40f
         );
+
+        if (shift)
+            drawText("SHIFT", 7.0f, 207.0f, 0.28f, COLOR_MUSGO);
+
+        if (altGr)
+            drawText("ALT GR", 260.0f, 207.0f, 0.28f, COLOR_MUSGO);
     }
 
     void drawBottomScreen(bool shift, bool altGr)
-{
-    drawToolbar();
-    drawWordPreview();
-    drawKeyboard(shift, altGr);
-
-    if (capsLock)
     {
-        drawText(
-            "MAY",
-            283.0f,
-            34.0f,
-            0.30f,
-            COLOR_MUSGO
-        );
-    }
+        drawToolbar();
+        drawWordPreview();
+        drawKeyboard(shift, altGr);
 
-    // MARCADOR TEMPORAL DE DIAGNOSTICO
-    drawText(
-        "EDITOR NUEVO ACTIVO",
-        75.0f,
-        222.0f,
-        0.35f,
-        COLOR_MUSGO
-    );
-}
+        if (capsLock)
+            drawText("MAY", 283.0f, 34.0f, 0.30f, COLOR_MUSGO);
+    }
 
     void drawEditor(bool shift, bool altGr)
     {
@@ -1246,23 +1213,25 @@ namespace
 
     int getTouchedKey(float x, float y)
     {
-        // Botón DEL de la barra de herramientas.
         if (y >= 3.0f && y <= 22.0f &&
             x >= 274.0f && x <= 317.0f)
-        {
             return 103;
+
+        if (y >= 3.0f && y <= 22.0f)
+        {
+            if (x >= 4.0f && x <= 47.0f) return 110;
+            if (x >= 49.0f && x <= 92.0f) return 111;
+            if (x >= 94.0f && x <= 137.0f) return 112;
+            if (x >= 139.0f && x <= 182.0f) return 113;
+            if (x >= 184.0f && x <= 227.0f) return 114;
+            if (x >= 229.0f && x <= 272.0f) return 115;
         }
 
-        if (y >= 188.0f && y <= 216.0f)
+        if (y >= 174.0f && y <= 201.0f)
         {
-            if (x >= 5.0f && x <= 48.0f)
-                return 100;
-
-            if (x >= 50.0f && x <= 270.0f)
-                return 101;
-
-            if (x >= 272.0f && x <= 315.0f)
-                return 102;
+            if (x >= 5.0f && x <= 48.0f) return 100;
+            if (x >= 50.0f && x <= 270.0f) return 101;
+            if (x >= 272.0f && x <= 315.0f) return 102;
         }
 
         for (int row = 0; row < 5; ++row)
@@ -1273,17 +1242,55 @@ namespace
 
                 if (x >= rect.x && x <= rect.x + rect.width &&
                     y >= rect.y && y <= rect.y + rect.height)
-                {
                     return row * 10 + column;
-                }
             }
         }
 
         return -1;
     }
 
+    void activateToolbar(int index)
+    {
+        switch (index)
+        {
+            case 110:
+                boldEnabled = !boldEnabled;
+                break;
+
+            case 111:
+                italicEnabled = !italicEnabled;
+                break;
+
+            case 112:
+                underlineEnabled = !underlineEnabled;
+                break;
+
+            case 113:
+                alignmentMode = (alignmentMode + 1) % 3;
+                break;
+
+            case 114:
+                // El panel de ajustes se incorporará con el sistema
+                // de configuración del documento.
+                break;
+
+            case 115:
+                showParagraphMarks = !showParagraphMarks;
+                break;
+
+            default:
+                break;
+        }
+    }
+
     void activateKeyboardKey(int keyIndex, bool shift, bool altGr)
     {
+        if (keyIndex >= 110 && keyIndex <= 115)
+        {
+            activateToolbar(keyIndex);
+            return;
+        }
+
         if (keyIndex == 100)
         {
             insertTab();
@@ -1387,11 +1394,16 @@ namespace
         }
         else if (now >= nextRepeatTime)
         {
-            activateKeyboardKey(
-                activeTouchKey,
-                shift,
-                altGr
-            );
+            // Evitar repetir acciones de alternancia al mantener
+            // pulsado un botón de la barra de herramientas.
+            if (activeTouchKey < 100 || activeTouchKey == 103)
+            {
+                activateKeyboardKey(
+                    activeTouchKey,
+                    shift,
+                    altGr
+                );
+            }
 
             nextRepeatTime = now + KEY_REPEAT_INTERVAL;
         }
@@ -1425,6 +1437,13 @@ bool Editor_Init(
 
     clipboard.clear();
 
+    boldEnabled = false;
+    italicEnabled = false;
+    underlineEnabled = false;
+    showParagraphMarks = false;
+    hudVisible = true;
+    alignmentMode = 0;
+
     undoHistory.clear();
     redoHistory.clear();
 
@@ -1456,7 +1475,9 @@ void Editor_Run()
         if (pressed & KEY_START)
             break;
 
-        // Doble pulsación de L: bloqueo de mayúsculas.
+        if (pressed & KEY_X)
+            hudVisible = !hudVisible;
+
         if (pressed & KEY_L)
         {
             if (lastLPress != 0 &&
@@ -1471,18 +1492,14 @@ void Editor_Run()
             }
         }
 
-        // Copiar y cortar.
         if ((pressed & KEY_Y) && shift)
             cutSelection();
         else if (pressed & KEY_Y)
             copySelection();
 
-        // Pegar. L+A queda reservado para pegar sin formato
-        // cuando se incorpore el sistema de estilos.
         if (pressed & KEY_A)
             pasteClipboard();
 
-        // Deshacer y rehacer.
         if ((pressed & KEY_B) && altGr)
             redoAction();
         else if ((pressed & KEY_B) && shift)
@@ -1490,7 +1507,6 @@ void Editor_Run()
         else if (pressed & KEY_B)
             undoAction(1);
 
-        // Navegación y selección.
         if (pressed & KEY_LEFT)
             moveCursorHorizontal(-1, selecting);
 
@@ -1503,9 +1519,6 @@ void Editor_Run()
         if (pressed & KEY_DOWN)
             moveCursorVertical(1, selecting);
 
-        // R: salto de línea.
-        // L+R: separación de párrafo.
-        // ZL+R: salto de página.
         if (pressed & KEY_R)
         {
             if (altGr)
@@ -1516,9 +1529,6 @@ void Editor_Run()
                 insertLineBreak();
         }
 
-        // ZR: retroceso continuo.
-        // L+ZR: borrar palabra.
-        // ZL+ZR: borrar línea.
         const bool eraseHeld = (held & KEY_ZR) != 0;
         const bool erasePressed = (pressed & KEY_ZR) != 0;
 
