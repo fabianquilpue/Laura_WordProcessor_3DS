@@ -5,6 +5,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
@@ -25,9 +26,12 @@ namespace
     constexpr int MAX_LINE_CHARACTERS = 43, VISIBLE_LINES = 15;
     constexpr int MAX_INDENT_LEVEL = 8;
 
-    constexpr float KEY_WIDTH = 24.0f, KEY_HEIGHT = 17.0f;
-    constexpr float KEY_GAP = 0.0f, KEY_START_X = 28.0f;
+    constexpr float KEY_WIDTH = 25.0f, KEY_HEIGHT = 18.0f;
+    constexpr float KEY_GAP = 0.0f, KEY_START_X = 22.0f;
     constexpr float KEY_START_Y = 88.0f, KEY_ROW_STEP = 18.0f;
+    constexpr float KEY_SPECIAL_X = KEY_START_X + 10.0f * KEY_WIDTH;
+    constexpr float KEY_SPECIAL_WIDTH = 28.0f;
+    constexpr float SPACE_KEY_WIDTH = 278.0f;
 
     constexpr u64 CURSOR_BLINK_INTERVAL = 500;
     constexpr u64 CAPS_DOUBLE_PRESS_MS = 350;
@@ -40,13 +44,16 @@ namespace
     constexpr u32 COLOR_CARBON = C2D_Color32(30,30,30,255);
     constexpr u32 COLOR_MUSGO = C2D_Color32(78,122,101,255);
     constexpr u32 COLOR_BORDE = C2D_Color32(220,218,208,255);
-    constexpr u32 COLOR_TECLA_BORDE = C2D_Color32(112,112,105,255);
-    constexpr u32 COLOR_TECLA = C2D_Color32(248,247,241,255);
-    constexpr u32 COLOR_TECLA_SUPERIOR = C2D_Color32(255,255,252,255);
+    constexpr u32 COLOR_TECLA_BORDE = C2D_Color32(105,105,100,255);
+    constexpr u32 COLOR_TECLA = C2D_Color32(246,245,239,255);
+    constexpr u32 COLOR_TECLA_SUPERIOR = C2D_Color32(255,255,253,255);
     constexpr u32 COLOR_TECLA_ACTIVA = C2D_Color32(133,164,141,255);
-    constexpr u32 COLOR_TECLA_SOMBRA = C2D_Color32(205,204,195,255);
+    constexpr u32 COLOR_TECLA_SOMBRA = C2D_Color32(185,184,176,255);
+    constexpr u32 COLOR_TECLA_LATERAL = C2D_Color32(220,219,211,255);
     constexpr u32 COLOR_SECUNDARIO = C2D_Color32(130,130,120,255);
     constexpr u32 COLOR_SELECCION = C2D_Color32(190,211,195,255);
+    constexpr u32 COLOR_BLANCO = C2D_Color32(255,255,255,255);
+    constexpr u32 COLOR_INFO_BORDE = C2D_Color32(125,125,118,255);
 
     C3D_RenderTarget* topScreen = nullptr;
     C3D_RenderTarget* bottomScreen = nullptr;
@@ -1144,26 +1151,50 @@ namespace
 
         if(separator=='\n')
         {
-            C2D_DrawRectSolid(x+1.0f,cy-5.0f,0.8f,1.2f,10.0f,COLOR_MUSGO);
-            C2D_DrawRectSolid(x+1.0f,cy-5.0f,0.8f,5.5f,1.2f,COLOR_MUSGO);
-            C2D_DrawRectSolid(x+5.0f,cy-5.0f,0.8f,1.2f,5.0f,COLOR_MUSGO);
-            C2D_DrawRectSolid(x+5.0f,cy-0.5f,0.8f,4.0f,1.2f,COLOR_MUSGO);
-            C2D_DrawRectSolid(x+8.0f,cy-0.5f,0.8f,1.2f,5.0f,COLOR_MUSGO);
+            // Marca de párrafo: pilcrow (¶).
+            const float t=1.25f;
+
+            C2D_DrawRectSolid(x+1.0f,cy-5.0f,0.8f,t,11.0f,COLOR_MUSGO);
+            C2D_DrawRectSolid(x+1.0f,cy-5.0f,0.8f,7.0f,t,COLOR_MUSGO);
+            C2D_DrawRectSolid(x+7.0f,cy-5.0f,0.8f,t,5.5f,COLOR_MUSGO);
+            C2D_DrawRectSolid(x+1.0f,cy+0.0f,0.8f,7.0f,t,COLOR_MUSGO);
+            C2D_DrawRectSolid(x+5.0f,cy+0.0f,0.8f,t,6.0f,COLOR_MUSGO);
         }
         else if(separator=='\v')
         {
-            C2D_DrawRectSolid(x+1.0f,cy-5.0f,0.8f,1.2f,7.0f,COLOR_MUSGO);
-            C2D_DrawRectSolid(x+1.0f,cy+1.0f,0.8f,6.0f,1.2f,COLOR_MUSGO);
-            C2D_DrawRectSolid(x+1.0f,cy+1.0f,0.8f,1.2f,5.0f,COLOR_MUSGO);
-            C2D_DrawRectSolid(x+5.0f,cy+4.0f,0.8f,1.2f,1.2f,COLOR_MUSGO);
+            // Salto manual de línea: flecha de retorno (↵).
+            const float t=1.3f;
+
+            C2D_DrawRectSolid(x+1.0f,cy-4.0f,0.8f,9.0f,t,COLOR_MUSGO);
+            C2D_DrawRectSolid(x+9.0f,cy-4.0f,0.8f,t,8.0f,COLOR_MUSGO);
+            C2D_DrawRectSolid(x+5.0f,cy+2.8f,0.8f,4.5f,t,COLOR_MUSGO);
+            C2D_DrawRectSolid(x+5.0f,cy+1.0f,0.8f,t,2.0f,COLOR_MUSGO);
+            C2D_DrawRectSolid(x+4.0f,cy+2.0f,0.8f,t,1.0f,COLOR_MUSGO);
+            C2D_DrawRectSolid(x+3.0f,cy+3.0f,0.8f,t,1.0f,COLOR_MUSGO);
         }
         else if(separator=='\f')
         {
-            C2D_DrawRectSolid(x+1.0f,cy-5.0f,0.8f,7.0f,1.2f,COLOR_MUSGO);
-            C2D_DrawRectSolid(x+1.0f,cy-5.0f,0.8f,1.2f,10.0f,COLOR_MUSGO);
-            C2D_DrawRectSolid(x+7.0f,cy-5.0f,0.8f,1.2f,10.0f,COLOR_MUSGO);
-            C2D_DrawRectSolid(x+1.0f,cy+4.0f,0.8f,7.0f,1.2f,COLOR_MUSGO);
-            C2D_DrawRectSolid(x+3.0f,cy-1.0f,0.8f,4.0f,1.0f,COLOR_MUSGO);
+            // Salto de página: línea discontinua con rótulo.
+            const float lineY=cy+1.0f;
+            const float labelWidth=68.0f;
+            const float labelX=TEXT_X+(TEXT_WIDTH-labelWidth)*0.5f;
+
+            for(float px=TEXT_X;px<TEXT_X+TEXT_WIDTH;px+=6.0f)
+            {
+                if(px>=labelX-3.0f&&px<labelX+labelWidth+3.0f)
+                    continue;
+
+                C2D_DrawRectSolid(
+                    px,lineY,0.8f,3.0f,1.0f,COLOR_MUSGO
+                );
+            }
+
+            C2D_DrawRectSolid(
+                labelX-2.0f,cy-3.0f,0.7f,labelWidth+4.0f,9.0f,
+                COLOR_PAPEL
+            );
+
+            drawText("Salto de página",labelX,cy-2.5f,0.28f,COLOR_MUSGO);
         }
     }
 
@@ -1267,8 +1298,15 @@ namespace
 
             drawStyledLine(a,b,x,y,extraSpace);
 
-            if(showParagraphMarks&&b<document.size())
+            if(showParagraphMarks&&b<document.size()&&isSeparator(document[b]))
                 drawParagraphMark(document[b],x+lineWidth+2.0f,y);
+
+            // Un párrafo vacío al final también debe mostrar su marca.
+            if(showParagraphMarks&&a==b&&a==document.size()&&
+               !document.empty()&&document.back()=='\n')
+            {
+                drawParagraphMark('\n',x,y);
+            }
         }
 
         const std::size_t line=findCursorLine();
@@ -1295,30 +1333,38 @@ namespace
 
     void drawKey(const KeyRect&r,const char*label,bool active=false,float scale=0.48f)
     {
-        C2D_DrawRectSolid(r.x,r.y,0.5f,r.width,r.height,COLOR_TECLA_BORDE);
+        // Cuerpo exterior y sombra inferior: las teclas quedan contiguas,
+        // compartiendo únicamente la línea divisoria de sus bordes.
+        C2D_DrawRectSolid(
+            r.x,r.y,0.5f,r.width,r.height,COLOR_TECLA_BORDE
+        );
 
         C2D_DrawRectSolid(
-            r.x+0.65f,r.y+0.65f,0.6f,
-            r.width-1.3f,r.height-1.3f,
+            r.x+1.0f,r.y+1.0f,0.6f,
+            r.width-2.0f,r.height-2.0f,
             active?COLOR_TECLA_ACTIVA:COLOR_TECLA
         );
 
+        // Bisel superior e izquierdo.
         C2D_DrawRectSolid(
-            r.x+1.3f,r.y+1.3f,0.7f,
-            r.width-2.6f,1.0f,
-            COLOR_TECLA_SUPERIOR
+            r.x+1.0f,r.y+1.0f,0.7f,
+            r.width-2.0f,1.0f,COLOR_TECLA_SUPERIOR
         );
 
         C2D_DrawRectSolid(
-            r.x+1.3f,r.y+r.height-2.0f,0.75f,
-            r.width-2.6f,0.7f,
-            COLOR_TECLA_SOMBRA
+            r.x+1.0f,r.y+1.0f,0.7f,
+            1.0f,r.height-2.0f,COLOR_TECLA_SUPERIOR
+        );
+
+        // Bisel inferior y derecho.
+        C2D_DrawRectSolid(
+            r.x+1.0f,r.y+r.height-2.0f,0.75f,
+            r.width-2.0f,1.0f,COLOR_TECLA_SOMBRA
         );
 
         C2D_DrawRectSolid(
-            r.x+1.3f,r.y+1.3f,0.75f,
-            0.7f,r.height-2.6f,
-            COLOR_TECLA_SUPERIOR
+            r.x+r.width-2.0f,r.y+1.0f,0.75f,
+            1.0f,r.height-2.0f,COLOR_TECLA_LATERAL
         );
 
         if(label&&label[0])
@@ -1373,32 +1419,39 @@ namespace
 
     void drawToolbar()
     {
-        const char* labels[]={"N","K","S","","","","¶"};
-        const bool active[]={
-            boldEnabled,italicEnabled,underlineEnabled,true,
-            false,false,showParagraphMarks
-        };
-
         for(int i=0;i<7;++i)
         {
             const float x=4.0f+i*45.0f;
-            drawKey({x,3,43,19},labels[i],active[i],0.40f);
+            const bool active=
+                i==0?boldEnabled:
+                i==1?italicEnabled:
+                i==2?underlineEnabled:
+                i==6?showParagraphMarks:false;
+
+            char spacing[8];
+            const char* label="";
+
+            switch(i)
+            {
+                case 0: label="N"; break;
+                case 1: label="K"; break;
+                case 2: label="S"; break;
+                case 3: label=""; break;
+                case 4:
+                    std::snprintf(
+                        spacing,sizeof(spacing),"%.1f",
+                        getParagraphSpacing(cursorPosition)
+                    );
+                    label=spacing;
+                    break;
+                case 5: label="Aa"; break;
+                case 6: label="¶"; break;
+            }
+
+            drawKey({x,3,43,19},label,active,i==5?0.42f:0.40f);
 
             if(i==3)
                 drawAlignmentIcon(x+11.0f,6.0f);
-
-            if(i==4)
-            {
-                char spacing[8];
-                std::snprintf(
-                    spacing,sizeof(spacing),"%.1f",
-                    getParagraphSpacing(cursorPosition)
-                );
-                drawText(spacing,x+9.0f,7.0f,0.40f,COLOR_CARBON);
-            }
-
-            if(i==5)
-                drawText("Aa",x+9.0f,6.5f,0.46f,COLOR_CARBON);
         }
     }
 
@@ -1416,25 +1469,16 @@ namespace
     void drawEnterKey(bool shift,bool alt)
     {
         const char* label=alt?"PAG":(shift?"PAR":"ENT");
-        const KeyRect r={268.0f,KEY_START_Y+KEY_ROW_STEP,27.0f,
-                         KEY_HEIGHT*2.0f+1.0f};
+        const KeyRect r={
+            KEY_SPECIAL_X,
+            KEY_START_Y+KEY_ROW_STEP,
+            KEY_SPECIAL_WIDTH,
+            KEY_HEIGHT*2.0f
+        };
 
-        C2D_DrawRectSolid(r.x,r.y,0.5f,r.width,r.height,COLOR_TECLA_BORDE);
-        C2D_DrawRectSolid(r.x+0.7f,r.y+0.7f,0.6f,r.width-1.4f,r.height-1.4f,
-                          activeTouchKey==104?COLOR_TECLA_ACTIVA:COLOR_TECLA);
-        C2D_DrawRectSolid(r.x+1.3f,r.y+1.3f,0.7f,r.width-2.6f,1.0f,
-                          COLOR_TECLA_SUPERIOR);
-        C2D_DrawRectSolid(r.x+1.3f,r.y+r.height-2.0f,0.75f,
-                          r.width-2.6f,0.7f,COLOR_TECLA_SOMBRA);
-
-        const float scale=0.34f;
-        const float letterY=r.y+5.0f;
-
-        for(int i=0;label[i];++i)
-        {
-            char letter[2]={label[i],0};
-            drawText(letter,r.x+9.0f,letterY+i*9.0f,scale,COLOR_CARBON);
-        }
+        drawKey(
+            r,label,activeTouchKey==104,0.34f
+        );
     }
 
     void drawKeyboard(bool shift,bool alt)
@@ -1455,7 +1499,7 @@ namespace
         }
 
         drawKey(
-            {268.0f,KEY_START_Y,27.0f,KEY_HEIGHT},
+            {KEY_SPECIAL_X,KEY_START_Y,KEY_SPECIAL_WIDTH,KEY_HEIGHT},
             "DEL",
             activeTouchKey==103,
             0.34f
@@ -1468,7 +1512,7 @@ namespace
                           (shift?"TAB":"ESPACIO"));
 
         drawKey(
-            {KEY_START_X,185.0f,240.0f,27.0f},
+            {KEY_START_X,185.0f,SPACE_KEY_WIDTH,27.0f},
             label,
             activeTouchKey==101,
             0.48f
@@ -1542,41 +1586,64 @@ namespace
         if(modified) modifiedTime=*modified;
 
         char clock[16]="--:--";
-        char modifiedDate[32]="--/--/--, --:--";
+        char modifiedDate[32]="--/--/-- --:--";
 
         std::strftime(clock,sizeof(clock),"%H:%M",&localTime);
-        std::strftime(modifiedDate,sizeof(modifiedDate),"%d/%m/%y, %H:%M",&modifiedTime);
+        std::strftime(modifiedDate,sizeof(modifiedDate),"%d/%m/%y %H:%M",&modifiedTime);
 
         u8 batteryLevel=0;
         PTMU_GetBatteryLevel(&batteryLevel);
         const int batteryPercent=std::min(100,static_cast<int>(batteryLevel)*20);
 
-        C2D_DrawRectSolid(0,0,0.9f,400,14,COLOR_CREMA);
-        C2D_DrawRectSolid(0,226,0.9f,400,14,COLOR_CREMA);
+        // Barras blancas con contorno visible.
+        C2D_DrawRectSolid(0,0,0.9f,400,14,COLOR_BLANCO);
+        C2D_DrawRectSolid(0,226,0.9f,400,14,COLOR_BLANCO);
 
-        char batteryText[12];
-        std::snprintf(batteryText,sizeof(batteryText),"%d%%",batteryPercent);
+        C2D_DrawRectSolid(0,0,0.95f,400,1,COLOR_INFO_BORDE);
+        C2D_DrawRectSolid(0,13,0.95f,400,1,COLOR_INFO_BORDE);
+        C2D_DrawRectSolid(0,0,0.95f,1,14,COLOR_INFO_BORDE);
+        C2D_DrawRectSolid(399,0,0.95f,1,14,COLOR_INFO_BORDE);
 
-        drawText(batteryText,5,2,0.34f,COLOR_CARBON);
-        drawText("Sin título",105,2,0.34f,COLOR_CARBON);
-        drawText(modifiedDate,165,2,0.29f,COLOR_SECUNDARIO);
-        drawText(clock,360,2,0.34f,COLOR_CARBON);
+        C2D_DrawRectSolid(0,226,0.95f,400,1,COLOR_INFO_BORDE);
+        C2D_DrawRectSolid(0,239,0.95f,400,1,COLOR_INFO_BORDE);
+        C2D_DrawRectSolid(0,226,0.95f,1,14,COLOR_INFO_BORDE);
+        C2D_DrawRectSolid(399,226,0.95f,1,14,COLOR_INFO_BORDE);
 
-        char statistics[96];
+        char batteryText[16];
+        std::snprintf(
+            batteryText,sizeof(batteryText),"Bat. %d%%",batteryPercent
+        );
+
+        drawText(batteryText,5,2,0.32f,COLOR_CARBON);
+        drawText("Sin título",65,2,0.32f,COLOR_CARBON);
+        drawText(modifiedDate,155,2,0.29f,COLOR_SECUNDARIO);
+        drawText(clock,365,2,0.32f,COLOR_CARBON);
+
         const std::size_t words=countWords();
         const std::size_t characters=countCharacters(document,0,document.size());
         const std::size_t pages=document.empty()?0:
             std::max<std::size_t>(1,(visualLines.size()+54)/55);
 
+        char wordText[32];
+        char characterText[32];
+        char pageText[24];
+
         std::snprintf(
-            statistics,sizeof(statistics),
-            "Palabras: %lu     Caracteres: %lu     Páginas: %lu",
-            static_cast<unsigned long>(words),
-            static_cast<unsigned long>(characters),
+            wordText,sizeof(wordText),"Palabras: %lu",
+            static_cast<unsigned long>(words)
+        );
+        std::snprintf(
+            characterText,sizeof(characterText),"Caracteres: %lu",
+            static_cast<unsigned long>(characters)
+        );
+        std::snprintf(
+            pageText,sizeof(pageText),"Páginas: %lu",
             static_cast<unsigned long>(pages)
         );
 
-        drawText(statistics,8,228,0.34f,COLOR_CARBON);
+        drawText(wordText,8,228,0.31f,COLOR_CARBON);
+        drawText(characterText,140,228,0.31f,COLOR_CARBON);
+        drawText(pageText,290,228,0.31f,COLOR_CARBON);
     }
 
     void drawBottomScreen(bool shift,bool alt)
@@ -1597,10 +1664,13 @@ namespace
         C2D_TargetClear(topScreen,COLOR_CREMA);
         C2D_SceneBegin(topScreen);
         drawPage();
-        drawDocument();
 
+        // El HUD se dibuja antes del documento para reservarle espacio
+        // en el búfer de texto y evitar que quede vacío.
         if(hudVisible)
             drawInfoBars();
+
+        drawDocument();
 
         C2D_TargetClear(bottomScreen,COLOR_CREMA);
         C2D_SceneBegin(bottomScreen);
@@ -1618,15 +1688,17 @@ namespace
                     return 110+i;
         }
 
-        if(y>=KEY_START_Y&&y<=KEY_START_Y+KEY_HEIGHT&&x>=268&&x<=295)
+        if(y>=KEY_START_Y&&y<=KEY_START_Y+KEY_HEIGHT&&
+           x>=KEY_SPECIAL_X&&x<=KEY_SPECIAL_X+KEY_SPECIAL_WIDTH)
             return 103;
 
         if(y>=KEY_START_Y+KEY_ROW_STEP&&
-           y<=KEY_START_Y+KEY_ROW_STEP+KEY_HEIGHT*2+1&&
-           x>=268&&x<=295)
+           y<=KEY_START_Y+KEY_ROW_STEP+KEY_HEIGHT*2&&
+           x>=KEY_SPECIAL_X&&x<=KEY_SPECIAL_X+KEY_SPECIAL_WIDTH)
             return 104;
 
-        if(y>=185&&y<=212&&x>=KEY_START_X&&x<=KEY_START_X+240)
+        if(y>=185&&y<=212&&
+           x>=KEY_START_X&&x<=KEY_START_X+SPACE_KEY_WIDTH)
             return 101;
 
         for(int r=0;r<5;++r)
@@ -1692,6 +1764,28 @@ namespace
 
         const int r=key/10,c=key%10;
         const KeyDefinition&k=keyboard[r][c];
+
+        // Combinaciones de puntuación:
+        // L + coma = punto y coma.
+        // L + punto = dos puntos.
+        // ZL + punto = puntos suspensivos.
+        if(key==37&&shift)
+        {
+            insertCharacter(";");
+            return;
+        }
+
+        if(key==38&&alt)
+        {
+            insertCharacter("…");
+            return;
+        }
+
+        if(key==38&&shift)
+        {
+            insertCharacter(":");
+            return;
+        }
 
         if(r==3&&c==9)
         {
@@ -1767,7 +1861,7 @@ bool Editor_Init(C3D_RenderTarget* topTarget,C3D_RenderTarget* bottomTarget)
 
     topScreen=topTarget;
     bottomScreen=bottomTarget;
-    textBuffer=C2D_TextBufNew(4096);
+    textBuffer=C2D_TextBufNew(16384);
 
     if(!textBuffer) return false;
 
