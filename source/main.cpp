@@ -1,3 +1,4 @@
+
 #include <3ds.h>
 #include <citro2d.h>
 
@@ -20,6 +21,9 @@ namespace
 
     constexpr u32 COLOR_MUSGO =
         C2D_Color32(78, 122, 101, 255);
+
+    constexpr u32 COLOR_ROJO =
+        C2D_Color32(170, 55, 55, 255);
 
     constexpr u64 FADE_DURATION = 900;
     constexpr u64 BREATH_DURATION = 3600;
@@ -51,9 +55,7 @@ namespace
         return C2D_Color32(r, g, b, 255);
     }
 
-    void prepareText(
-        C2D_Text* text,
-        const char* content)
+    void prepareText(C2D_Text* text, const char* content)
     {
         C2D_TextParse(text, textBuffer, content);
         C2D_TextOptimize(text);
@@ -69,19 +71,13 @@ namespace
         float width = 0.0f;
 
         C2D_TextGetDimensions(
-            text,
-            scale,
-            scale,
-            &width,
-            nullptr
+            text, scale, scale, &width, nullptr
         );
-
-        const float x = (screenWidth - width) / 2.0f;
 
         C2D_DrawText(
             text,
             C2D_WithColor,
-            x,
+            (screenWidth - width) / 2.0f,
             y,
             0.0f,
             scale,
@@ -90,20 +86,12 @@ namespace
         );
     }
 
-    void drawFadeOverlay(
-        float screenWidth,
-        u8 alpha)
+    void drawFadeOverlay(float screenWidth, u8 alpha)
     {
-        const u32 overlayColor =
-            C2D_Color32(0, 0, 0, alpha);
-
         C2D_DrawRectSolid(
-            0.0f,
-            0.0f,
-            1.0f,
-            screenWidth,
-            SCREEN_HEIGHT,
-            overlayColor
+            0.0f, 0.0f, 1.0f,
+            screenWidth, SCREEN_HEIGHT,
+            C2D_Color32(0, 0, 0, alpha)
         );
     }
 
@@ -133,13 +121,11 @@ namespace
             scale = MAX_LOGO_HEIGHT / originalHeight;
 
         const float width = originalWidth * scale;
-        const float x = (TOP_WIDTH - width) / 2.0f;
-        const float y = 28.0f;
 
         C2D_DrawImageAt(
             logo,
-            x,
-            y,
+            (TOP_WIDTH - width) / 2.0f,
+            28.0f,
             0.0f,
             nullptr,
             scale,
@@ -147,7 +133,7 @@ namespace
         );
     }
 
-    void drawWelcome(u64 elapsed)
+    void drawWelcome(u64 elapsed, u8 blackAlpha)
     {
         const float breathPhase =
             static_cast<float>(elapsed % BREATH_DURATION) /
@@ -173,47 +159,33 @@ namespace
         drawLogo();
 
         drawCenteredText(
-            &titleText,
-            TOP_WIDTH,
-            126.0f,
-            0.82f,
-            COLOR_CARBON
+            &titleText, TOP_WIDTH, 126.0f, 0.82f, COLOR_CARBON
         );
 
         drawCenteredText(
-            &spanishText,
-            TOP_WIDTH,
-            166.0f,
-            0.43f,
-            COLOR_CARBON
+            &spanishText, TOP_WIDTH, 166.0f, 0.43f, COLOR_CARBON
         );
 
         drawCenteredText(
-            &englishText,
-            TOP_WIDTH,
-            190.0f,
-            0.38f,
-            COLOR_CARBON
+            &englishText, TOP_WIDTH, 190.0f, 0.38f, COLOR_CARBON
         );
+
+        drawFadeOverlay(TOP_WIDTH, blackAlpha);
 
         C2D_TargetClear(bottomScreen, COLOR_CREMA);
         C2D_SceneBegin(bottomScreen);
 
         drawCenteredText(
             &instructionLine1,
-            BOTTOM_WIDTH,
-            98.0f,
-            0.43f,
-            breathingColor
+            BOTTOM_WIDTH, 98.0f, 0.43f, breathingColor
         );
 
         drawCenteredText(
             &instructionLine2,
-            BOTTOM_WIDTH,
-            124.0f,
-            0.43f,
-            breathingColor
+            BOTTOM_WIDTH, 124.0f, 0.43f, breathingColor
         );
+
+        drawFadeOverlay(BOTTOM_WIDTH, blackAlpha);
 
         C3D_FrameEnd(0);
     }
@@ -228,27 +200,15 @@ namespace
         drawLogo();
 
         drawCenteredText(
-            &titleText,
-            TOP_WIDTH,
-            126.0f,
-            0.82f,
-            COLOR_CARBON
+            &titleText, TOP_WIDTH, 126.0f, 0.82f, COLOR_CARBON
         );
 
         drawCenteredText(
-            &spanishText,
-            TOP_WIDTH,
-            166.0f,
-            0.43f,
-            COLOR_CARBON
+            &spanishText, TOP_WIDTH, 166.0f, 0.43f, COLOR_CARBON
         );
 
         drawCenteredText(
-            &englishText,
-            TOP_WIDTH,
-            190.0f,
-            0.38f,
-            COLOR_CARBON
+            &englishText, TOP_WIDTH, 190.0f, 0.38f, COLOR_CARBON
         );
 
         drawFadeOverlay(TOP_WIDTH, blackAlpha);
@@ -258,18 +218,12 @@ namespace
 
         drawCenteredText(
             &instructionLine1,
-            BOTTOM_WIDTH,
-            98.0f,
-            0.43f,
-            COLOR_MUSGO
+            BOTTOM_WIDTH, 98.0f, 0.43f, COLOR_MUSGO
         );
 
         drawCenteredText(
             &instructionLine2,
-            BOTTOM_WIDTH,
-            124.0f,
-            0.43f,
-            COLOR_MUSGO
+            BOTTOM_WIDTH, 124.0f, 0.43f, COLOR_MUSGO
         );
 
         drawFadeOverlay(BOTTOM_WIDTH, blackAlpha);
@@ -279,8 +233,32 @@ namespace
 
     void runWelcome()
     {
-        const u64 startTime = osGetTime();
+        const u64 fadeStart = osGetTime();
 
+        // Primero se muestra la bienvenida desde negro.
+        while (aptMainLoop())
+        {
+            hidScanInput();
+
+            const u64 elapsed = osGetTime() - fadeStart;
+
+            float progress =
+                static_cast<float>(elapsed) /
+                static_cast<float>(FADE_DURATION);
+
+            if (progress > 1.0f)
+                progress = 1.0f;
+
+            const u8 alpha =
+                static_cast<u8>((1.0f - progress) * 255.0f);
+
+            drawWelcome(elapsed, alpha);
+
+            if (progress >= 1.0f)
+                break;
+        }
+
+        // La bienvenida permanece visible hasta recibir entrada.
         bool leaving = false;
         u64 transitionStart = 0;
 
@@ -288,9 +266,7 @@ namespace
         {
             hidScanInput();
 
-            const u32 pressedKeys = hidKeysDown();
-
-            if (!leaving && pressedKeys != 0)
+            if (!leaving && hidKeysDown() != 0)
             {
                 leaving = true;
                 transitionStart = osGetTime();
@@ -298,8 +274,7 @@ namespace
 
             if (!leaving)
             {
-                const u64 elapsed = osGetTime() - startTime;
-                drawWelcome(elapsed);
+                drawWelcome(osGetTime() - fadeStart, 0);
             }
             else
             {
@@ -313,14 +288,68 @@ namespace
                 if (progress > 1.0f)
                     progress = 1.0f;
 
-                const u8 alpha =
-                    static_cast<u8>(progress * 255.0f);
-
-                drawTransition(alpha);
+                drawTransition(
+                    static_cast<u8>(progress * 255.0f)
+                );
 
                 if (progress >= 1.0f)
                     break;
             }
+        }
+    }
+
+    void showError(const char* message)
+    {
+        C2D_Text errorText;
+        C2D_Text instructionText;
+
+        C2D_TextParse(
+            &errorText,
+            textBuffer,
+            message
+        );
+
+        C2D_TextOptimize(&errorText);
+
+        C2D_TextParse(
+            &instructionText,
+            textBuffer,
+            "Presiona cualquier boton para salir."
+        );
+
+        C2D_TextOptimize(&instructionText);
+
+        while (aptMainLoop())
+        {
+            hidScanInput();
+
+            if (hidKeysDown() != 0)
+                break;
+
+            C3D_FrameBegin(C3D_FRAME_SYNCDRAW);
+
+            C2D_TargetClear(topScreen, COLOR_CREMA);
+            C2D_SceneBegin(topScreen);
+
+            drawCenteredText(
+                &titleText,
+                TOP_WIDTH, 75.0f, 0.75f, COLOR_CARBON
+            );
+
+            drawCenteredText(
+                &errorText,
+                TOP_WIDTH, 115.0f, 0.48f, COLOR_ROJO
+            );
+
+            C2D_TargetClear(bottomScreen, COLOR_CREMA);
+            C2D_SceneBegin(bottomScreen);
+
+            drawCenteredText(
+                &instructionText,
+                BOTTOM_WIDTH, 110.0f, 0.38f, COLOR_MUSGO
+            );
+
+            C3D_FrameEnd(0);
         }
     }
 }
@@ -331,7 +360,6 @@ int main(int argc, char* argv[])
     (void)argv;
 
     romfsInit();
-
     gfxInitDefault();
 
     C3D_Init(C3D_DEFAULT_CMDBUF_SIZE);
@@ -378,8 +406,15 @@ int main(int argc, char* argv[])
         "romfs:/splash.t3x"
     );
 
-    if (splashSheet != nullptr &&
-    Editor_Init(topScreen, bottomScreen))
+    if (splashSheet == nullptr)
+    {
+        showError("ERROR: NO SE CARGO SPLASH.T3X");
+    }
+    else if (!Editor_Init(topScreen, bottomScreen))
+    {
+        showError("ERROR: EDITOR_INIT FALLO");
+    }
+    else
     {
         runWelcome();
         Editor_Run();
