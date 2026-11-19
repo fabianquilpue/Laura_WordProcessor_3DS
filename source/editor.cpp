@@ -1,3 +1,4 @@
+
 #include "editor.hpp"
 
 #include <3ds.h>
@@ -631,15 +632,24 @@ namespace
                 selectionAnchor=cursorPosition;
             }
         }
-        else if(selectionMode||hasSelection)
+        else if(selectionMode)
+        {
+            selectionMode=false;
+            hasSelection=(cursorPosition!=selectionAnchor);
+        }
+        else if(hasSelection)
+        {
             clearSelection();
+        }
 
         if(dir<0)
             cursorPosition=previousUTF8(document,cursorPosition);
         else if(dir>0)
             cursorPosition=nextUTF8(document,cursorPosition);
 
-        hasSelection=selectionMode&&(cursorPosition!=selectionAnchor);
+        if(selectionMode)
+            hasSelection=(cursorPosition!=selectionAnchor);
+
         updateScroll();
     }
 
@@ -656,8 +666,15 @@ namespace
                 selectionAnchor=cursorPosition;
             }
         }
-        else if(selectionMode||hasSelection)
+        else if(selectionMode)
+        {
+            selectionMode=false;
+            hasSelection=(cursorPosition!=selectionAnchor);
+        }
+        else if(hasSelection)
+        {
             clearSelection();
+        }
 
         const std::size_t line=findCursorLine();
 
@@ -669,11 +686,17 @@ namespace
 
         std::size_t p=visualLines[target].first,remain=col;
 
-        while(p<visualLines[target].second&&remain-->0)
+        while(p<visualLines[target].second&&remain>0)
+        {
             p=nextUTF8(document,p);
+            --remain;
+        }
 
         cursorPosition=p;
-        hasSelection=selectionMode&&(cursorPosition!=selectionAnchor);
+
+        if(selectionMode)
+            hasSelection=(cursorPosition!=selectionAnchor);
+
         updateScroll();
     }
 
@@ -708,9 +731,12 @@ namespace
             return;
         }
 
+        const std::size_t a=selectionStart();
+        const std::size_t b=selectionEnd();
+
         bool all=true;
 
-        for(std::size_t p=selectionStart();p<selectionEnd();)
+        for(std::size_t p=a;p<b;)
         {
             auto it=characterStyles.find(p);
 
@@ -725,7 +751,7 @@ namespace
 
         pushUndo();
 
-        for(std::size_t p=selectionStart();p<selectionEnd();)
+        for(std::size_t p=a;p<b;)
         {
             (characterStyles[p].*member)=!all;
             p=nextUTF8(document,p);
@@ -740,6 +766,31 @@ namespace
         C2D_TextParse(&t,textBuffer,s);
         C2D_TextOptimize(&t);
         C2D_DrawText(&t,C2D_WithColor,x,y,0.5f,scale,scale,color);
+    }
+
+    void drawItalicText(const char* s,float x,float y,float scale,u32 color)
+    {
+        C2D_Text t;
+        C2D_TextParse(&t,textBuffer,s);
+        C2D_TextOptimize(&t);
+
+        C3D_Mtx matrix;
+        C3D_Mtx_Identity(&matrix);
+
+        // Inclinación horizontal de los glifos.
+        matrix.r[0][1]=-0.22f;
+
+        C2D_DrawTextMtx(
+            &t,
+            C2D_WithColor,
+            &matrix,
+            x,
+            y,
+            0.5f,
+            scale,
+            scale,
+            color
+        );
     }
 
     float measureTextWidth(const std::string& s)
@@ -776,13 +827,30 @@ namespace
             const TextStyle st=it==characterStyles.end()?TextStyle{}:it->second;
             const float w=measureTextWidth(ch);
 
-            if(st.bold)
-                drawText(ch.c_str(),x+0.45f,y,TEXT_SCALE,COLOR_CARBON);
+            if(st.italic)
+                drawItalicText(ch.c_str(),x,y,TEXT_SCALE,COLOR_CARBON);
+            else
+                drawText(ch.c_str(),x,y,TEXT_SCALE,COLOR_CARBON);
 
-            drawText(ch.c_str(),x,y,TEXT_SCALE,COLOR_CARBON);
+            if(st.bold)
+            {
+                if(st.italic)
+                    drawItalicText(ch.c_str(),x+0.45f,y,TEXT_SCALE,COLOR_CARBON);
+                else
+                    drawText(ch.c_str(),x+0.45f,y,TEXT_SCALE,COLOR_CARBON);
+            }
 
             if(st.underline)
-                C2D_DrawRectSolid(x,y+10.2f,0.7f,std::max(1.0f,w),0.7f,COLOR_CARBON);
+            {
+                C2D_DrawRectSolid(
+                    x,
+                    y+11.5f,
+                    0.7f,
+                    std::max(1.0f,w),
+                    0.55f,
+                    COLOR_CARBON
+                );
+            }
 
             x+=w;
             p=q;
@@ -814,8 +882,14 @@ namespace
                     const std::string before=document.substr(a,sa-a);
                     const std::string selected=document.substr(sa,sb-sa);
 
-                    C2D_DrawRectSolid(x+measureTextWidth(before),y,0.4f,
-                                      std::max(1.0f,measureTextWidth(selected)),11,COLOR_SELECCION);
+                    C2D_DrawRectSolid(
+                        x+measureTextWidth(before),
+                        y,
+                        0.4f,
+                        std::max(1.0f,measureTextWidth(selected)),
+                        11,
+                        COLOR_SELECCION
+                    );
                 }
             }
 
@@ -827,7 +901,13 @@ namespace
                 const char* mark=sep=='\n'?"¶":(sep=='\v'?"↵":"");
 
                 if(mark[0])
-                    drawText(mark,x+measureTextWidth(line)+1,y-0.5f,0.48f,COLOR_MUSGO);
+                    drawText(
+                        mark,
+                        x+measureTextWidth(line)+1,
+                        y-0.5f,
+                        0.48f,
+                        COLOR_MUSGO
+                    );
             }
         }
 
@@ -901,11 +981,30 @@ namespace
     void drawKeyboard(bool shift,bool alt)
     {
         for(int r=0;r<5;++r)
+        {
             for(int c=0;c<10;++c)
-                drawKey(getKeyRect(r,c),getKeyLabel(keyboard[r][c],shift,alt,capsLock),false,0.40f);
+            {
+                const int key=r*10+c;
 
-        const char* label=(shift&&alt)?"RESET":(alt?"INDENT":(shift?"TAB":"ESPACIO"));
-        drawKey({49,174,222,27},label,false,0.43f);
+                drawKey(
+                    getKeyRect(r,c),
+                    getKeyLabel(keyboard[r][c],shift,alt,capsLock),
+                    activeTouchKey==key,
+                    0.40f
+                );
+            }
+        }
+
+        const char* label=(shift&&alt)?"RESET":
+                          (alt?"INDENT":
+                          (shift?"TAB":"ESPACIO"));
+
+        drawKey(
+            {49,174,222,27},
+            label,
+            activeTouchKey==101,
+            0.43f
+        );
 
         if(shift) drawText("SHIFT",7,207,0.28f,COLOR_MUSGO);
         if(alt) drawText("ZL",287,207,0.28f,COLOR_MUSGO);
@@ -1053,7 +1152,10 @@ namespace
         touchPosition t;
         hidTouchRead(&t);
 
-        const int key=getTouchedKey(static_cast<float>(t.px),static_cast<float>(t.py));
+        const int key=getTouchedKey(
+            static_cast<float>(t.px),
+            static_cast<float>(t.py)
+        );
 
         if(key<0)
         {
@@ -1147,6 +1249,9 @@ void Editor_Run()
             {
                 selectionMode=false;
                 hasSelection=(cursorPosition!=selectionAnchor);
+
+                if(!hasSelection)
+                    selectionAnchor=cursorPosition;
             }
             else
             {
