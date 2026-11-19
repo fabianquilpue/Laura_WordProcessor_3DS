@@ -1202,6 +1202,13 @@ namespace
 
         drawPage();
         drawDocument();
+        drawText(
+    "EDITOR ACTIVO - PRUEBA 01",
+    105.0f,
+    222.0f,
+    0.35f,
+    COLOR_MUSGO
+);
 
         C2D_TargetClear(bottomScreen, COLOR_CREMA);
         C2D_SceneBegin(bottomScreen);
