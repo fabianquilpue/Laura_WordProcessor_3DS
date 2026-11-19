@@ -19,12 +19,13 @@ namespace
     constexpr float TEXT_X = 43.0f, TEXT_Y = 29.0f;
     constexpr float TEXT_SCALE = 0.48f, LINE_HEIGHT = 12.5f;
     constexpr float INDENT_WIDTH = 12.0f;
+    constexpr float TEXT_WIDTH = 310.0f;
     constexpr int MAX_LINE_CHARACTERS = 43, VISIBLE_LINES = 15;
     constexpr int MAX_INDENT_LEVEL = 8;
 
-    constexpr float KEY_WIDTH = 28.0f, KEY_HEIGHT = 20.0f;
-    constexpr float KEY_GAP = 2.0f, KEY_START_X = 15.0f;
-    constexpr float KEY_START_Y = 54.0f, KEY_ROW_STEP = 21.0f;
+    constexpr float KEY_WIDTH = 32.0f, KEY_HEIGHT = 19.0f;
+    constexpr float KEY_GAP = 0.0f, KEY_START_X = 0.0f;
+    constexpr float KEY_START_Y = 83.0f, KEY_ROW_STEP = 19.0f;
 
     constexpr u64 CURSOR_BLINK_INTERVAL = 500;
     constexpr u64 CAPS_DOUBLE_PRESS_MS = 350;
@@ -40,7 +41,7 @@ namespace
     constexpr u32 COLOR_TECLA_BORDE = C2D_Color32(38,38,35,255);
     constexpr u32 COLOR_TECLA = C2D_Color32(248,247,241,255);
     constexpr u32 COLOR_TECLA_SUPERIOR = C2D_Color32(255,255,252,255);
-    constexpr u32 COLOR_TECLA_ACTIVA = C2D_Color32(220,231,222,255);
+    constexpr u32 COLOR_TECLA_ACTIVA = C2D_Color32(133,164,141,255);
     constexpr u32 COLOR_SECUNDARIO = C2D_Color32(130,130,120,255);
     constexpr u32 COLOR_SELECCION = C2D_Color32(190,211,195,255);
 
@@ -70,6 +71,8 @@ namespace
 
     bool boldEnabled = false, italicEnabled = false, underlineEnabled = false;
     bool showParagraphMarks = false, hudVisible = true;
+
+    // 0: izquierda, 1: derecha, 2: centrada, 3: justificada.
     int alignmentMode = 0;
 
     struct EditorSnapshot
@@ -157,6 +160,13 @@ namespace
         if(!p) return 0;
         const std::size_t n=document.rfind('\n',p-1);
         return n==std::string::npos ? 0 : n+1;
+    }
+
+    std::size_t getParagraphEnd(std::size_t p)
+    {
+        p=std::min(p,document.size());
+        const std::size_t n=document.find('\n',p);
+        return n==std::string::npos ? document.size() : n;
     }
 
     std::size_t getLogicalLineStart(std::size_t p)
@@ -621,7 +631,7 @@ namespace
     void insertParagraphBreak(){insertCharacter("\n");}
     void insertPageBreak(){insertCharacter("\f");}
 
-    void moveCursorHorizontal(int dir,bool selecting)
+    void prepareCursorMovement(bool selecting)
     {
         if(selecting)
         {
@@ -640,63 +650,90 @@ namespace
         {
             clearSelection();
         }
+    }
 
-        if(dir<0)
-            cursorPosition=previousUTF8(document,cursorPosition);
-        else if(dir>0)
-            cursorPosition=nextUTF8(document,cursorPosition);
-
+    void finishCursorMovement()
+    {
         if(selectionMode)
             hasSelection=(cursorPosition!=selectionAnchor);
 
         updateScroll();
     }
 
-    void moveCursorVertical(int dir,bool selecting)
+    void moveCursorHorizontal(int dir,bool selecting)
+    {
+        prepareCursorMovement(selecting);
+
+        if(dir<0)
+            cursorPosition=previousUTF8(document,cursorPosition);
+        else if(dir>0)
+            cursorPosition=nextUTF8(document,cursorPosition);
+
+        finishCursorMovement();
+    }
+
+    void moveCursorToLineBoundary(bool toEnd,bool selecting)
     {
         buildVisualLines();
-        if(visualLines.empty()) return;
-
-        if(selecting)
-        {
-            if(!selectionMode)
-            {
-                selectionMode=true;
-                selectionAnchor=cursorPosition;
-            }
-        }
-        else if(selectionMode)
-        {
-            selectionMode=false;
-            hasSelection=(cursorPosition!=selectionAnchor);
-        }
-        else if(hasSelection)
-        {
-            clearSelection();
-        }
+        prepareCursorMovement(selecting);
 
         const std::size_t line=findCursorLine();
 
-        if((dir<0&&line==0)||(dir>0&&line+1>=visualLines.size()))
-            return;
+        if(!visualLines.empty())
+            cursorPosition=toEnd?visualLines[line].second:visualLines[line].first;
 
-        const std::size_t col=countCharacters(document,visualLines[line].first,cursorPosition);
-        const std::size_t target=dir<0?line-1:line+1;
+        finishCursorMovement();
+    }
 
-        std::size_t p=visualLines[target].first,remain=col;
+    void moveCursorToParagraphBoundary(bool toEnd,bool selecting)
+    {
+        prepareCursorMovement(selecting);
 
-        while(p<visualLines[target].second&&remain>0)
+        cursorPosition=toEnd
+            ?getParagraphEnd(cursorPosition)
+            :getParagraphStart(cursorPosition);
+
+        finishCursorMovement();
+    }
+
+    void moveCursorWord(int dir,bool selecting)
+    {
+        prepareCursorMovement(selecting);
+
+        if(dir<0)
         {
-            p=nextUTF8(document,p);
-            --remain;
+            while(cursorPosition>0)
+            {
+                const std::size_t p=previousUTF8(document,cursorPosition);
+                if(!isWhitespace(document.substr(p,cursorPosition-p))) break;
+                cursorPosition=p;
+            }
+
+            while(cursorPosition>0)
+            {
+                const std::size_t p=previousUTF8(document,cursorPosition);
+                if(isWhitespace(document.substr(p,cursorPosition-p))) break;
+                cursorPosition=p;
+            }
+        }
+        else
+        {
+            while(cursorPosition<document.size())
+            {
+                const std::size_t p=nextUTF8(document,cursorPosition);
+                if(!isWhitespace(document.substr(cursorPosition,p-cursorPosition))) break;
+                cursorPosition=p;
+            }
+
+            while(cursorPosition<document.size())
+            {
+                const std::size_t p=nextUTF8(document,cursorPosition);
+                if(isWhitespace(document.substr(cursorPosition,p-cursorPosition))) break;
+                cursorPosition=p;
+            }
         }
 
-        cursorPosition=p;
-
-        if(selectionMode)
-            hasSelection=(cursorPosition!=selectionAnchor);
-
-        updateScroll();
+        finishCursorMovement();
     }
 
     std::string getCurrentWord()
@@ -774,17 +811,10 @@ namespace
         C2D_TextOptimize(&t);
 
         C3D_Mtx previousMatrix;
-
-        // Guardar la transformación actual de Citro2D.
         C2D_ViewSave(&previousMatrix);
 
-        // Trasladar el origen al punto donde comienza el carácter.
         C2D_ViewTranslate(x,y);
-
-        // Inclinar horizontalmente los glifos para representar cursiva.
         C2D_ViewShear(-0.22f,0.0f);
-
-        // Devolver el origen a su posición original.
         C2D_ViewTranslate(-x,-y);
 
         C2D_DrawText(
@@ -798,10 +828,7 @@ namespace
             color
         );
 
-        // Asegurar que el texto transformado se procese antes de restaurar.
         C2D_Flush();
-
-        // Restaurar la transformación previa para no afectar otros elementos.
         C2D_ViewRestore(&previousMatrix);
     }
 
@@ -827,7 +854,8 @@ namespace
         C2D_DrawRectSolid(PAGE_X+PAGE_WIDTH-1,PAGE_Y,0.6f,1,PAGE_HEIGHT,COLOR_BORDE);
     }
 
-    void drawStyledLine(std::size_t start,std::size_t end,float x,float y)
+    void drawStyledLine(std::size_t start,std::size_t end,float x,float y,
+                        float extraSpace=0.0f)
     {
         std::size_t p=start;
 
@@ -856,15 +884,19 @@ namespace
             {
                 C2D_DrawRectSolid(
                     x,
-                    y+11.5f,
+                    y+10.5f,
                     0.7f,
                     std::max(1.0f,w),
-                    0.55f,
+                    1.0f,
                     COLOR_CARBON
                 );
             }
 
             x+=w;
+
+            if(ch==" ")
+                x+=extraSpace;
+
             p=q;
         }
     }
@@ -880,9 +912,38 @@ namespace
             if(li>=visualLines.size()) break;
 
             const std::size_t a=visualLines[li].first,b=visualLines[li].second;
-            const float x=TEXT_X+getParagraphIndent(a)*INDENT_WIDTH;
+            const float baseX=TEXT_X+getParagraphIndent(a)*INDENT_WIDTH;
             const float y=TEXT_Y+i*LINE_HEIGHT;
             const std::string line=document.substr(a,b-a);
+            const float lineWidth=measureTextWidth(line);
+
+            float x=baseX;
+            float extraSpace=0.0f;
+
+            if(alignmentMode==1)
+                x+=std::max(0.0f,TEXT_WIDTH-lineWidth);
+            else if(alignmentMode==2)
+                x+=std::max(0.0f,(TEXT_WIDTH-lineWidth)*0.5f);
+            else if(alignmentMode==3)
+            {
+                const bool isLastLine=(b>=document.size()||isSeparator(document[b]));
+
+                if(!isLastLine)
+                {
+                    std::size_t spaces=0;
+
+                    for(std::size_t p=a;p<b;)
+                    {
+                        const std::size_t q=nextUTF8(document,p);
+                        if(document.substr(p,q-p)==" ")
+                            ++spaces;
+                        p=q;
+                    }
+
+                    if(spaces>0&&lineWidth<TEXT_WIDTH)
+                        extraSpace=(TEXT_WIDTH-lineWidth)/spaces;
+                }
+            }
 
             if(hasSelection)
             {
@@ -905,17 +966,17 @@ namespace
                 }
             }
 
-            drawStyledLine(a,b,x,y);
+            drawStyledLine(a,b,x,y,extraSpace);
 
             if(showParagraphMarks&&b<document.size())
             {
                 const char sep=document[b];
-                const char* mark=sep=='\n'?"¶":(sep=='\v'?"↵":"");
+                const char* mark=sep=='\n'?"¶":(sep=='\v'?"↴":"");
 
                 if(mark[0])
                     drawText(
                         mark,
-                        x+measureTextWidth(line)+1,
+                        x+lineWidth+1,
                         y-0.5f,
                         0.48f,
                         COLOR_MUSGO
@@ -928,8 +989,55 @@ namespace
         if(line>=firstVisibleLine&&line<firstVisibleLine+VISIBLE_LINES)
         {
             const std::size_t a=visualLines[line].first;
-            const float x=TEXT_X+getParagraphIndent(a)*INDENT_WIDTH+
-                          measureTextWidth(document.substr(a,cursorPosition-a));
+            const std::string before=document.substr(a,cursorPosition-a);
+            float x=TEXT_X+getParagraphIndent(a)*INDENT_WIDTH+
+                    measureTextWidth(before);
+
+            if(alignmentMode==1)
+                x+=std::max(0.0f,TEXT_WIDTH-measureTextWidth(document.substr(
+                    visualLines[line].first,
+                    visualLines[line].second-visualLines[line].first)));
+            else if(alignmentMode==2)
+                x+=std::max(0.0f,(TEXT_WIDTH-measureTextWidth(document.substr(
+                    visualLines[line].first,
+                    visualLines[line].second-visualLines[line].first)))*0.5f);
+            else if(alignmentMode==3)
+            {
+                const std::size_t end=visualLines[line].second;
+                const bool isLastLine=(end>=document.size()||isSeparator(document[end]));
+
+                if(!isLastLine)
+                {
+                    const std::string whole=document.substr(a,end-a);
+                    std::size_t spaces=0;
+
+                    for(std::size_t p=a;p<end;)
+                    {
+                        const std::size_t q=nextUTF8(document,p);
+                        if(document.substr(p,q-p)==" ")
+                            ++spaces;
+                        p=q;
+                    }
+
+                    if(spaces>0)
+                    {
+                        std::size_t beforeSpaces=0;
+
+                        for(std::size_t p=a;p<cursorPosition;)
+                        {
+                            const std::size_t q=nextUTF8(document,p);
+                            if(document.substr(p,q-p)==" ")
+                                ++beforeSpaces;
+                            p=q;
+                        }
+
+                        const float width=measureTextWidth(whole);
+                        const float extra=std::max(0.0f,TEXT_WIDTH-width)/spaces;
+                        x+=beforeSpaces*extra;
+                    }
+                }
+            }
+
             const float y=TEXT_Y+(line-firstVisibleLine)*LINE_HEIGHT;
 
             if((osGetTime()/CURSOR_BLINK_INTERVAL)%2==0)
@@ -939,18 +1047,17 @@ namespace
 
     KeyRect getKeyRect(int r,int c)
     {
-        const float total=10*KEY_WIDTH+9*KEY_GAP;
-
-        return {KEY_START_X+(320-total)/2+c*(KEY_WIDTH+KEY_GAP),
+        return {KEY_START_X+c*(KEY_WIDTH+KEY_GAP),
                 KEY_START_Y+r*KEY_ROW_STEP,KEY_WIDTH,KEY_HEIGHT};
     }
 
-    void drawKey(const KeyRect&r,const char*label,bool active=false,float scale=0.43f)
+    void drawKey(const KeyRect&r,const char*label,bool active=false,float scale=0.48f)
     {
         C2D_DrawRectSolid(r.x,r.y,0.5f,r.width,r.height,COLOR_TECLA_BORDE);
-        C2D_DrawRectSolid(r.x+1,r.y+1,0.6f,r.width-2,r.height-2,
+        C2D_DrawRectSolid(r.x+0.7f,r.y+0.7f,0.6f,r.width-1.4f,r.height-1.4f,
                           active?COLOR_TECLA_ACTIVA:COLOR_TECLA);
-        C2D_DrawRectSolid(r.x+2,r.y+2,0.7f,r.width-4,2,COLOR_TECLA_SUPERIOR);
+        C2D_DrawRectSolid(r.x+1.5f,r.y+1.5f,0.7f,r.width-3.0f,1.5f,
+                          COLOR_TECLA_SUPERIOR);
 
         if(label&&label[0])
         {
@@ -978,16 +1085,53 @@ namespace
         return shift?k.shift:k.base;
     }
 
-    void drawToolbar(bool shift,bool alt)
+    void drawAlignmentIcon(float x,float y)
     {
-        const char* del=alt?"LINE":(shift?"WORD":"DEL");
-        const char* labels[]={"N","K","S","Alin.","Aa","¶",del};
-        const bool active[]={boldEnabled,italicEnabled,underlineEnabled,alignmentMode!=0,
-                             false,showParagraphMarks,false};
+        const float widths[4][4]={
+            {21,16,20,13},
+            {13,20,16,21},
+            {17,21,15,19},
+            {21,21,21,21}
+        };
+
+        for(int i=0;i<4;++i)
+        {
+            const float w=widths[alignmentMode][i];
+            const float px=alignmentMode==0?x:
+                           alignmentMode==1?x+21-w:
+                           x+(21-w)*0.5f;
+
+            C2D_DrawRectSolid(px,y+i*3.5f,0.8f,w,1.4f,COLOR_CARBON);
+        }
+    }
+
+    void drawToolbar(bool backspaceActive)
+    {
+        const char* labels[]={"N","K","S","","Aa","¶","DEL"};
+        const bool active[]={boldEnabled,italicEnabled,underlineEnabled,true,
+                             false,showParagraphMarks,backspaceActive};
 
         for(int i=0;i<7;++i)
-            drawKey({4.0f+i*45.0f,3,43,19},labels[i],active[i],
-                    i==3?0.34f:(i==6?0.32f:0.42f));
+        {
+            const float x=4.0f+i*45.0f;
+
+            drawKey({x,3,43,19},labels[i],active[i],
+                    i==6?0.32f:0.42f);
+
+            if(i==3)
+                drawAlignmentIcon(x+11.0f,6.0f);
+        }
+    }
+
+    bool isDeadKeyActive(int key)
+    {
+        if(key==39)
+            return pendingDeadKey=="´"||pendingDeadKey=="¨"||pendingDeadKey=="`";
+
+        if(key==9)
+            return pendingDeadKey=="^";
+
+        return false;
     }
 
     void drawKeyboard(bool shift,bool alt)
@@ -1001,8 +1145,8 @@ namespace
                 drawKey(
                     getKeyRect(r,c),
                     getKeyLabel(keyboard[r][c],shift,alt,capsLock),
-                    activeTouchKey==key,
-                    0.40f
+                    activeTouchKey==key||isDeadKeyActive(key),
+                    0.48f
                 );
             }
         }
@@ -1012,36 +1156,59 @@ namespace
                           (shift?"TAB":"ESPACIO"));
 
         drawKey(
-            {49,174,222,27},
+            {40,181,240,28},
             label,
             activeTouchKey==101,
-            0.43f
+            0.50f
         );
-
-        if(shift) drawText("SHIFT",7,207,0.28f,COLOR_MUSGO);
-        if(alt) drawText("ZL",287,207,0.28f,COLOR_MUSGO);
     }
 
-    void drawBottomScreen(bool shift,bool alt)
+    void drawWordViewer()
     {
-        drawToolbar(shift,alt);
-
-        C2D_DrawRectSolid(5,27,0.5f,310,21,COLOR_BORDE);
-        C2D_DrawRectSolid(6,28,0.6f,308,19,COLOR_PAPEL);
+        C2D_DrawRectSolid(5,27,0.5f,310,49,COLOR_BORDE);
+        C2D_DrawRectSolid(6,28,0.6f,308,47,COLOR_PAPEL);
 
         const std::string word=getCurrentWord();
 
-        drawText(word.empty()?"Palabra actual":word.c_str(),11,32,
-                 word.empty()?0.34f:0.48f,
-                 word.empty()?COLOR_SECUNDARIO:COLOR_MUSGO);
+        if(word.empty())
+        {
+            drawText("Palabra actual",10,43,0.42f,COLOR_SECUNDARIO);
+            return;
+        }
 
+        C2D_Text t;
+        C2D_TextParse(&t,textBuffer,word.c_str());
+        C2D_TextOptimize(&t);
+
+        float w=0,h=0;
+        C2D_TextGetDimensions(&t,0.82f,0.82f,&w,&h);
+
+        const float scale=std::min(0.82f,300.0f/std::max(1.0f,w)*0.82f);
+        C2D_TextGetDimensions(&t,scale,scale,&w,&h);
+
+        C2D_DrawText(
+            &t,
+            C2D_WithColor,
+            (320.0f-w)*0.5f,
+            41.0f,
+            0.8f,
+            scale,
+            scale,
+            COLOR_MUSGO
+        );
+    }
+
+    void drawBottomScreen(bool shift,bool alt,bool backspaceActive)
+    {
+        drawToolbar(backspaceActive);
+        drawWordViewer();
         drawKeyboard(shift,alt);
 
         if(capsLock)
-            drawText("MAY",283,34,0.30f,COLOR_MUSGO);
+            drawText("MAY",283,64,0.30f,COLOR_MUSGO);
     }
 
-    void drawEditor(bool shift,bool alt)
+    void drawEditor(bool shift,bool alt,bool backspaceActive)
     {
         C3D_FrameBegin(C3D_FRAME_SYNCDRAW);
         C2D_TextBufClear(textBuffer);
@@ -1053,7 +1220,7 @@ namespace
 
         C2D_TargetClear(bottomScreen,COLOR_CREMA);
         C2D_SceneBegin(bottomScreen);
-        drawBottomScreen(shift,alt);
+        drawBottomScreen(shift,alt,backspaceActive);
 
         C3D_FrameEnd(0);
     }
@@ -1068,7 +1235,7 @@ namespace
                 if(x>=4+i*45&&x<=47+i*45) return 110+i;
         }
 
-        if(y>=174&&y<=201&&x>=49&&x<=271)
+        if(y>=181&&y<=209&&x>=40&&x<=280)
             return 101;
 
         for(int r=0;r<5;++r)
@@ -1090,7 +1257,7 @@ namespace
             case 110:toggleStyle(&TextStyle::bold,boldEnabled);break;
             case 111:toggleStyle(&TextStyle::italic,italicEnabled);break;
             case 112:toggleStyle(&TextStyle::underline,underlineEnabled);break;
-            case 113:alignmentMode=(alignmentMode+1)%3;break;
+            case 113:alignmentMode=(alignmentMode+1)%4;break;
             case 114:break;
             case 115:showParagraphMarks=!showParagraphMarks;break;
         }
@@ -1294,10 +1461,30 @@ void Editor_Run()
         else if((pressed&KEY_B)&&shift) undoAction(5);
         else if(pressed&KEY_B) undoAction();
 
-        if(pressed&KEY_LEFT) moveCursorHorizontal(-1,selectionMode);
-        if(pressed&KEY_RIGHT) moveCursorHorizontal(1,selectionMode);
-        if(pressed&KEY_UP) moveCursorVertical(-1,selectionMode);
-        if(pressed&KEY_DOWN) moveCursorVertical(1,selectionMode);
+        // Navegación: L modifica la acción de cada dirección.
+        if(pressed&KEY_LEFT)
+        {
+            if(shift) moveCursorWord(-1,selectionMode);
+            else moveCursorHorizontal(-1,selectionMode);
+        }
+
+        if(pressed&KEY_RIGHT)
+        {
+            if(shift) moveCursorWord(1,selectionMode);
+            else moveCursorHorizontal(1,selectionMode);
+        }
+
+        if(pressed&KEY_UP)
+        {
+            if(shift) moveCursorToParagraphBoundary(false,selectionMode);
+            else moveCursorToLineBoundary(false,selectionMode);
+        }
+
+        if(pressed&KEY_DOWN)
+        {
+            if(shift) moveCursorToParagraphBoundary(true,selectionMode);
+            else moveCursorToLineBoundary(true,selectionMode);
+        }
 
         const bool pageCombo=(pressed&KEY_R)&&(held&KEY_ZR);
 
@@ -1329,7 +1516,9 @@ void Editor_Run()
         }
 
         processTouch(shift,alt);
-        drawEditor(shift,alt);
+
+        const bool backspaceActive=(held&KEY_ZR)!=0||activeTouchKey==103;
+        drawEditor(shift,alt,backspaceActive);
     }
 }
 
