@@ -1,3 +1,4 @@
+
 #include "editor.hpp"
 
 #include <3ds.h>
@@ -945,32 +946,6 @@ namespace
         return w;
     }
 
-    void applyParagraphProperty(
-        std::map<std::size_t,int>& property,
-        int value
-    )
-    {
-        if(!hasSelection)
-        {
-            property[getParagraphStart(cursorPosition)]=value;
-        }
-        else
-        {
-            const std::size_t a=getParagraphStart(selectionStart());
-            const std::size_t b=getParagraphEnd(selectionEnd());
-
-            property[a]=value;
-
-            for(auto& e:property)
-                if(e.first>=a&&e.first<=b)
-                    e.second=value;
-        }
-
-        buildVisualLines();
-        updateScroll();
-        markModified();
-    }
-
     void changeAlignment()
     {
         const int next=(getParagraphAlignment(cursorPosition)+1)%4;
@@ -1154,7 +1129,6 @@ namespace
 
         if(separator=='\n')
         {
-            // Calderón: asta vertical y curva abierta.
             C2D_DrawRectSolid(x+1.0f,cy-5.0f,0.8f,1.2f,10.0f,COLOR_MUSGO);
             C2D_DrawRectSolid(x+1.0f,cy-5.0f,0.8f,5.5f,1.2f,COLOR_MUSGO);
             C2D_DrawRectSolid(x+5.0f,cy-5.0f,0.8f,1.2f,5.0f,COLOR_MUSGO);
@@ -1163,7 +1137,6 @@ namespace
         }
         else if(separator=='\v')
         {
-            // Salto manual: flecha hacia abajo y a la izquierda.
             C2D_DrawRectSolid(x+1.0f,cy-5.0f,0.8f,1.2f,7.0f,COLOR_MUSGO);
             C2D_DrawRectSolid(x+1.0f,cy+1.0f,0.8f,6.0f,1.2f,COLOR_MUSGO);
             C2D_DrawRectSolid(x+1.0f,cy+1.0f,0.8f,1.2f,5.0f,COLOR_MUSGO);
@@ -1171,7 +1144,6 @@ namespace
         }
         else if(separator=='\f')
         {
-            // Salto de página: pequeño símbolo de página.
             C2D_DrawRectSolid(x+1.0f,cy-5.0f,0.8f,7.0f,1.2f,COLOR_MUSGO);
             C2D_DrawRectSolid(x+1.0f,cy-5.0f,0.8f,1.2f,10.0f,COLOR_MUSGO);
             C2D_DrawRectSolid(x+7.0f,cy-5.0f,0.8f,1.2f,10.0f,COLOR_MUSGO);
@@ -1180,7 +1152,7 @@ namespace
         }
     }
 
-    float getAlignedLineX(std::size_t a,std::size_t b,float lineWidth)
+    float getAlignedLineX(std::size_t a,float lineWidth)
     {
         const float baseX=TEXT_X+getParagraphIndent(a)*INDENT_WIDTH;
         const int alignment=getParagraphAlignment(a);
@@ -1219,7 +1191,7 @@ namespace
         const std::size_t b=visualLines[line].second;
         const std::string whole=document.substr(a,b-a);
         const float width=measureTextWidth(whole);
-        float x=getAlignedLineX(a,b,width);
+        float x=getAlignedLineX(a,width);
         const std::string before=document.substr(a,cursorPosition-a);
         x+=measureTextWidth(before);
 
@@ -1257,7 +1229,7 @@ namespace
             const float y=getLineY(li);
             const std::string line=document.substr(a,b-a);
             const float lineWidth=measureTextWidth(line);
-            const float x=getAlignedLineX(a,b,lineWidth);
+            const float x=getAlignedLineX(a,lineWidth);
             const float extraSpace=getJustificationExtra(a,b,lineWidth);
 
             if(hasSelection)
@@ -1439,7 +1411,6 @@ namespace
             }
         }
 
-        // Retroceso, a la derecha del cero.
         drawKey(
             {292.0f,KEY_START_Y,27.0f,KEY_HEIGHT},
             "DEL",
@@ -1533,13 +1504,17 @@ namespace
         std::strftime(clock,sizeof(clock),"%H:%M",&localTime);
         std::strftime(modifiedDate,sizeof(modifiedDate),"%d/%m/%y, %H:%M",&modifiedTime);
 
-        const int battery=osGetBatteryLevel();
+        // PTMU_GetBatteryLevel entrega un nivel de 0 a 5.
+        // Se representa en saltos aproximados de 20%.
+        u8 batteryLevel=0;
+        PTMU_GetBatteryLevel(&batteryLevel);
+        const int batteryPercent=std::min(100,static_cast<int>(batteryLevel)*20);
 
         C2D_DrawRectSolid(0,0,0.9f,400,14,COLOR_CREMA);
         C2D_DrawRectSolid(0,226,0.9f,400,14,COLOR_CREMA);
 
         char batteryText[12];
-        std::snprintf(batteryText,sizeof(batteryText),"%d%%",battery);
+        std::snprintf(batteryText,sizeof(batteryText),"%d%%",batteryPercent);
 
         drawText(batteryText,5,2,0.34f,COLOR_CARBON);
         drawText("Sin título",105,2,0.34f,COLOR_CARBON);
@@ -1838,7 +1813,6 @@ void Editor_Run()
             }
         }
 
-        // Y: copiar. L+Y o ZL+Y: cortar.
         if(pressed&KEY_Y)
         {
             if(hasSelection)
@@ -1856,11 +1830,9 @@ void Editor_Run()
             }
         }
 
-        // A: pegar con formato. L+A o ZL+A: pegar como texto plano.
         if(pressed&KEY_A)
             pasteClipboard(shift||alt);
 
-        // B: deshacer. L+B o ZL+B: rehacer.
         if(pressed&KEY_B)
         {
             if(shift||alt)
@@ -1883,7 +1855,6 @@ void Editor_Run()
         if(!(held&KEY_B))
             nextUndoRepeat=0;
 
-        // Navegación: L modifica el movimiento a palabra o párrafo.
         if(pressed&KEY_LEFT)
         {
             if(shift) moveCursorWord(-1,selectionMode);
