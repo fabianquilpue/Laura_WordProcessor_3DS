@@ -54,7 +54,8 @@ namespace
     constexpr u32 COLOR_TECLA_LATERAL = C2D_Color32(220,219,211,255);
     constexpr u32 COLOR_SECUNDARIO = C2D_Color32(130,130,120,255);
 
-    constexpr u32 COLOR_SELECCION = C2D_Color32(174,220,218,255);
+    // Calipso más saturado para que la selección destaque sobre el papel.
+    constexpr u32 COLOR_SELECCION = C2D_Color32(65,190,185,255);
 
     constexpr u32 COLOR_BLANCO = C2D_Color32(255,255,255,255);
     constexpr u32 COLOR_INFO_BORDE = C2D_Color32(125,125,118,255);
@@ -116,6 +117,12 @@ namespace
 
     u64 lastLPress = 0, nextRepeatTime = 0;
     u64 nextPhysicalRepeat = 0, nextUndoRepeat = 0;
+
+    // Estado de repetición de la cruceta.
+    u64 nextNavigationRepeat = 0;
+    u32 navigationKey = 0;
+    bool navigationShift = false;
+
     int activeTouchKey = -1;
 
     struct KeyDefinition
@@ -131,10 +138,14 @@ namespace
         float x,y,width,height;
     };
 
+    // Fila numérica:
+    // L:  * @ · $ % & / < > =
+    // ZL: | + # ª   ¬ \   ^ º
     const std::array<std::array<KeyDefinition,10>,5> keyboard = {{
-        {{{"1","|","@",false},{"2","*","#",false},{"3","·","ª",false},
-          {"4","$","+",false},{"5","%","¬",false},{"6","&","",false},
-          {"7","/","º",false},{"8","(","<",false},{"9",")",">",false},{"0","=","^",false}}},
+        {{{"1","*","|",false},{"2","@","+",false},{"3","·","#",false},
+          {"4","$","ª",false},{"5","%","",false},{"6","&","¬",false},
+          {"7","/","\\",false},{"8","<","",false},{"9",">","^",false},
+          {"0","=","º",false}}},
         {{{"q","Q","",true},{"w","W","",true},{"e","E","€",true},{"r","R","",true},
           {"t","T","",true},{"y","Y","",true},{"u","U","",true},{"i","I","",true},
           {"o","O","",true},{"p","P","",true}}},
@@ -142,8 +153,8 @@ namespace
           {"g","G","",true},{"h","H","",true},{"j","J","",true},{"k","K","",true},
           {"l","L","",true},{"ñ","Ñ","~",true}}},
         {{{"z","Z","",true},{"x","X","",true},{"c","C","ç",true},{"v","V","",true},
-          {"b","B","",true},{"n","N","",true},{"m","M","",true},{",",",",",",false},
-          {".",".",".",false},{"´","¨","`",false}}},
+          {"b","B","",true},{"n","N","",true},{"m","M","",true},
+          {",",";",",",false},{".",":","…",false},{"´","¨","`",false}}},
         {{{"«","«","«",false},{"¿","¿","¿",false},{"¡","¡","¡",false},
           {"(","[","{",false},{"-","–","–",false},{"‘","“","“",false},
           {")","]","}",false},{"?","?","?",false},{"!","!","!",false},{"»","»","»",false}}}
@@ -152,23 +163,37 @@ namespace
     std::size_t nextUTF8(const std::string& s,std::size_t p)
     {
         if(p>=s.size()) return s.size();
+
         ++p;
-        while(p<s.size() && (static_cast<unsigned char>(s[p])&0xC0)==0x80) ++p;
+
+        while(p<s.size() && (static_cast<unsigned char>(s[p])&0xC0)==0x80)
+            ++p;
+
         return p;
     }
 
     std::size_t previousUTF8(const std::string& s,std::size_t p)
     {
         if(!p) return 0;
+
         --p;
-        while(p>0 && (static_cast<unsigned char>(s[p])&0xC0)==0x80) --p;
+
+        while(p>0 && (static_cast<unsigned char>(s[p])&0xC0)==0x80)
+            --p;
+
         return p;
     }
 
     std::size_t countCharacters(const std::string& s,std::size_t a,std::size_t b)
     {
         std::size_t n=0;
-        while(a<b){a=nextUTF8(s,a);++n;}
+
+        while(a<b)
+        {
+            a=nextUTF8(s,a);
+            ++n;
+        }
+
         return n;
     }
 
@@ -185,44 +210,57 @@ namespace
     std::size_t getParagraphStart(std::size_t p)
     {
         p=std::min(p,document.size());
+
         if(!p) return 0;
+
         const std::size_t n=document.rfind('\n',p-1);
+
         return n==std::string::npos ? 0 : n+1;
     }
 
     std::size_t getParagraphEnd(std::size_t p)
     {
         p=std::min(p,document.size());
+
         const std::size_t n=document.find('\n',p);
+
         return n==std::string::npos ? document.size() : n;
     }
 
     std::size_t getLogicalLineStart(std::size_t p)
     {
         p=std::min(p,document.size());
+
         while(p>0 && !isSeparator(document[p-1]))
             p=previousUTF8(document,p);
+
         return p;
     }
 
     int getParagraphIndent(std::size_t p)
     {
         auto it=paragraphIndents.upper_bound(getParagraphStart(p));
+
         if(it==paragraphIndents.begin()) return 0;
+
         return (--it)->second;
     }
 
     int getParagraphAlignment(std::size_t p)
     {
         auto it=paragraphAlignments.upper_bound(getParagraphStart(p));
+
         if(it==paragraphAlignments.begin()) return 0;
+
         return (--it)->second;
     }
 
     float getParagraphSpacing(std::size_t p)
     {
         auto it=paragraphLineSpacing.upper_bound(getParagraphStart(p));
+
         if(it==paragraphLineSpacing.begin()) return 1.0f;
+
         return (--it)->second;
     }
 
@@ -243,14 +281,17 @@ namespace
     void pushUndo()
     {
         undoHistory.push_back(makeSnapshot());
+
         if(undoHistory.size()>MAX_HISTORY)
             undoHistory.erase(undoHistory.begin());
+
         redoHistory.clear();
     }
 
     void buildVisualLines()
     {
         visualLines.clear();
+
         std::size_t start=0,p=0;
         int chars=0;
 
@@ -268,7 +309,9 @@ namespace
             p=nextUTF8(document,p);
             ++chars;
 
-            if(chars>=MAX_LINE_CHARACTERS && p<document.size() && !isSeparator(document[p]))
+            if(chars>=MAX_LINE_CHARACTERS &&
+               p<document.size() &&
+               !isSeparator(document[p]))
             {
                 visualLines.push_back({start,p});
                 start=p;
@@ -282,8 +325,11 @@ namespace
     std::size_t findCursorLine()
     {
         for(std::size_t i=0;i<visualLines.size();++i)
-            if(cursorPosition>=visualLines[i].first && cursorPosition<=visualLines[i].second)
+        {
+            if(cursorPosition>=visualLines[i].first &&
+               cursorPosition<=visualLines[i].second)
                 return i;
+        }
 
         return visualLines.empty()?0:visualLines.size()-1;
     }
@@ -292,14 +338,15 @@ namespace
     {
         float y=TEXT_Y;
 
-        for(std::size_t i=firstVisibleLine;i<line && i<visualLines.size();++i)
+        for(std::size_t i=firstVisibleLine;
+            i<line && i<visualLines.size();++i)
+        {
             y+=LINE_HEIGHT*getParagraphSpacing(visualLines[i].first);
+        }
 
         return y;
     }
 
-    // Ajusta el desplazamiento según la altura real de las líneas.
-    // Así también se consideran los párrafos con interlineado ampliado.
     void updateScroll()
     {
         if(visualLines.empty())
@@ -331,7 +378,6 @@ namespace
             ++firstVisibleLine;
         }
 
-        // Nunca permitir que el índice de desplazamiento exceda el documento.
         if(firstVisibleLine>=visualLines.size())
             firstVisibleLine=visualLines.size()-1;
     }
@@ -359,6 +405,7 @@ namespace
 
         const auto a=selectionStart(),b=selectionEnd();
         const std::size_t removed=b-a;
+
         const int indent=getParagraphIndent(a);
         const int alignment=getParagraphAlignment(a);
         const float spacing=getParagraphSpacing(a);
@@ -367,38 +414,51 @@ namespace
 
         for(const auto& e:characterStyles)
         {
-            if(e.first<a) styles[e.first]=e.second;
-            else if(e.first>=b) styles[e.first-removed]=e.second;
+            if(e.first<a)
+                styles[e.first]=e.second;
+            else if(e.first>=b)
+                styles[e.first-removed]=e.second;
         }
 
         std::map<std::size_t,int> indents;
+
         for(const auto& e:paragraphIndents)
         {
-            if(e.first<a) indents[e.first]=e.second;
-            else if(e.first>=b) indents[e.first-removed]=e.second;
+            if(e.first<a)
+                indents[e.first]=e.second;
+            else if(e.first>=b)
+                indents[e.first-removed]=e.second;
         }
 
         std::map<std::size_t,int> alignments;
+
         for(const auto& e:paragraphAlignments)
         {
-            if(e.first<a) alignments[e.first]=e.second;
-            else if(e.first>=b) alignments[e.first-removed]=e.second;
+            if(e.first<a)
+                alignments[e.first]=e.second;
+            else if(e.first>=b)
+                alignments[e.first-removed]=e.second;
         }
 
         std::map<std::size_t,float> spacings;
+
         for(const auto& e:paragraphLineSpacing)
         {
-            if(e.first<a) spacings[e.first]=e.second;
-            else if(e.first>=b) spacings[e.first-removed]=e.second;
+            if(e.first<a)
+                spacings[e.first]=e.second;
+            else if(e.first>=b)
+                spacings[e.first-removed]=e.second;
         }
 
         document.erase(a,removed);
+
         characterStyles.swap(styles);
         paragraphIndents.swap(indents);
         paragraphAlignments.swap(alignments);
         paragraphLineSpacing.swap(spacings);
 
         const std::size_t paragraph=getParagraphStart(a);
+
         paragraphIndents[paragraph]=indent;
         paragraphAlignments[paragraph]=alignment;
         paragraphLineSpacing[paragraph]=spacing;
@@ -413,17 +473,22 @@ namespace
         document=s.document;
         cursorPosition=std::min(s.cursor,document.size());
         selectionAnchor=std::min(s.anchor,document.size());
+
         hasSelection=s.selection;
         selectionMode=s.selectionMode;
+
         paragraphIndents=s.paragraphIndents;
         paragraphAlignments=s.paragraphAlignments;
         paragraphLineSpacing=s.paragraphLineSpacing;
         characterStyles=s.characterStyles;
+
         boldEnabled=s.bold;
         italicEnabled=s.italic;
         underlineEnabled=s.underline;
+
         pendingDeadKey.clear();
         preferredVerticalColumn=-1;
+
         buildVisualLines();
         updateScroll();
         markModified();
@@ -434,8 +499,10 @@ namespace
         while(amount-->0 && !undoHistory.empty())
         {
             redoHistory.push_back(makeSnapshot());
+
             EditorSnapshot s=undoHistory.back();
             undoHistory.pop_back();
+
             restoreSnapshot(s);
         }
     }
@@ -443,9 +510,12 @@ namespace
     void redoAction()
     {
         if(redoHistory.empty()) return;
+
         undoHistory.push_back(makeSnapshot());
+
         EditorSnapshot s=redoHistory.back();
         redoHistory.pop_back();
+
         restoreSnapshot(s);
     }
 
@@ -454,23 +524,28 @@ namespace
         if(value.empty()) return;
 
         p=std::min(p,document.size());
+
         const int inheritedIndent=getParagraphIndent(p);
         const int inheritedAlignment=getParagraphAlignment(p);
         const float inheritedSpacing=getParagraphSpacing(p);
 
         std::map<std::size_t,int> indents;
+
         for(const auto& e:paragraphIndents)
             indents[e.first>=p?e.first+value.size():e.first]=e.second;
 
         std::map<std::size_t,int> alignments;
+
         for(const auto& e:paragraphAlignments)
             alignments[e.first>=p?e.first+value.size():e.first]=e.second;
 
         std::map<std::size_t,float> spacings;
+
         for(const auto& e:paragraphLineSpacing)
             spacings[e.first>=p?e.first+value.size():e.first]=e.second;
 
         std::map<std::size_t,TextStyle> styles;
+
         for(const auto& e:characterStyles)
             styles[e.first>=p?e.first+value.size():e.first]=e.second;
 
@@ -492,7 +567,9 @@ namespace
             }
 
             const std::size_t next=nextUTF8(value,i);
+
             styles[p+i]={boldEnabled,italicEnabled,underlineEnabled};
+
             i=next;
         }
 
@@ -503,8 +580,10 @@ namespace
 
         if(paragraphIndents.find(0)==paragraphIndents.end())
             paragraphIndents[0]=0;
+
         if(paragraphAlignments.find(0)==paragraphAlignments.end())
             paragraphAlignments[0]=0;
+
         if(paragraphLineSpacing.find(0)==paragraphLineSpacing.end())
             paragraphLineSpacing[0]=1.0f;
     }
@@ -515,12 +594,16 @@ namespace
 
         pushUndo();
 
-        if(hasSelection) deleteSelection();
+        if(hasSelection)
+            deleteSelection();
 
         insertDocumentText(cursorPosition,value);
+
         cursorPosition+=value.size();
+
         clearSelection();
         preferredVerticalColumn=-1;
+
         buildVisualLines();
         updateScroll();
         markModified();
@@ -537,8 +620,10 @@ namespace
         clipboard.styles.clear();
 
         for(const auto& e:characterStyles)
-            if(e.first>=a&&e.first<b)
+        {
+            if(e.first>=a && e.first<b)
                 clipboard.styles[e.first-a]=e.second;
+        }
     }
 
     void pasteClipboard(bool plain)
@@ -551,6 +636,7 @@ namespace
             deleteSelection();
 
         const std::size_t start=cursorPosition;
+
         insertDocumentText(cursorPosition,clipboard.text);
 
         if(!plain)
@@ -560,8 +646,10 @@ namespace
         }
 
         cursorPosition+=clipboard.text.size();
+
         clearSelection();
         preferredVerticalColumn=-1;
+
         buildVisualLines();
         updateScroll();
         markModified();
@@ -580,24 +668,31 @@ namespace
         const std::string dead=pendingDeadKey;
         pendingDeadKey.clear();
 
-        struct C{const char*d;const char*l;const char*r;};
+        struct C
+        {
+            const char*d;
+            const char*l;
+            const char*r;
+        };
 
         static const C combos[]={
             {"´","a","á"},{"´","e","é"},{"´","i","í"},{"´","o","ó"},{"´","u","ú"},
             {"´","A","Á"},{"´","E","É"},{"´","I","Í"},{"´","O","Ó"},{"´","U","Ú"},
-            {"¨","u","ü"},{"¨","U","Ü"},{"`","a","à"},{"`","e","è"},{"`","i","ì"},
-            {"`","o","ò"},{"`","u","ù"},{"^","a","â"},{"^","e","ê"},{"^","i","î"},
-            {"^","o","ô"},{"^","u","û"}
+            {"¨","u","ü"},{"¨","U","Ü"},
+            {"`","a","à"},{"`","e","è"},{"`","i","ì"},{"`","o","ò"},{"`","u","ù"},
+            {"^","a","â"},{"^","e","ê"},{"^","i","î"},{"^","o","ô"},{"^","u","û"}
         };
 
         std::string result=dead+value;
 
         for(const C& c:combos)
-            if(dead==c.d&&value==c.l)
+        {
+            if(dead==c.d && value==c.l)
             {
                 result=c.r;
                 break;
             }
+        }
 
         insertRaw(result);
     }
@@ -622,69 +717,90 @@ namespace
         {
             pushUndo();
             deleteSelection();
+
             buildVisualLines();
             updateScroll();
             markModified();
+
             return;
         }
 
         if(!cursorPosition) return;
 
         const std::size_t p=previousUTF8(document,cursorPosition);
+
         pushUndo();
 
         std::map<std::size_t,TextStyle> styles;
+
         for(const auto&e:characterStyles)
         {
-            if(e.first<p) styles[e.first]=e.second;
-            else if(e.first>p) styles[e.first-(cursorPosition-p)]=e.second;
+            if(e.first<p)
+                styles[e.first]=e.second;
+            else if(e.first>p)
+                styles[e.first-(cursorPosition-p)]=e.second;
         }
 
         const std::size_t len=cursorPosition-p;
+
         std::map<std::size_t,int> indents;
         std::map<std::size_t,int> alignments;
         std::map<std::size_t,float> spacings;
 
         for(const auto&e:paragraphIndents)
         {
-            if(e.first>p&&e.first<=cursorPosition) continue;
+            if(e.first>p && e.first<=cursorPosition) continue;
+
             indents[e.first>cursorPosition?e.first-len:e.first]=e.second;
         }
 
         for(const auto&e:paragraphAlignments)
         {
-            if(e.first>p&&e.first<=cursorPosition) continue;
+            if(e.first>p && e.first<=cursorPosition) continue;
+
             alignments[e.first>cursorPosition?e.first-len:e.first]=e.second;
         }
 
         for(const auto&e:paragraphLineSpacing)
         {
-            if(e.first>p&&e.first<=cursorPosition) continue;
+            if(e.first>p && e.first<=cursorPosition) continue;
+
             spacings[e.first>cursorPosition?e.first-len:e.first]=e.second;
         }
 
         document.erase(p,len);
+
         characterStyles.swap(styles);
         paragraphIndents.swap(indents);
         paragraphAlignments.swap(alignments);
         paragraphLineSpacing.swap(spacings);
 
         cursorPosition=p;
+
         clearSelection();
         preferredVerticalColumn=-1;
+
         buildVisualLines();
         updateScroll();
         markModified();
     }
 
-    void insertTab(){insertCharacter("\t");}
+    void insertTab()
+    {
+        insertCharacter("\t");
+    }
 
     void increaseIndent()
     {
         const std::size_t p=getParagraphStart(cursorPosition);
+
         pushUndo();
+
         int& n=paragraphIndents[p];
-        if(n<MAX_INDENT_LEVEL) ++n;
+
+        if(n<MAX_INDENT_LEVEL)
+            ++n;
+
         buildVisualLines();
         updateScroll();
         markModified();
@@ -693,6 +809,7 @@ namespace
     void resetIndent()
     {
         const std::size_t p=getParagraphStart(cursorPosition);
+
         pushUndo();
 
         if(hasSelection)
@@ -701,7 +818,10 @@ namespace
             const std::size_t b=getParagraphEnd(selectionEnd());
 
             for(auto& e:paragraphIndents)
-                if(e.first>=a&&e.first<=b) e.second=0;
+            {
+                if(e.first>=a && e.first<=b)
+                    e.second=0;
+            }
         }
         else
         {
@@ -729,27 +849,37 @@ namespace
             while(p>0)
             {
                 std::size_t q=previousUTF8(document,p);
-                if(!isWhitespace(document.substr(q,p-q))) break;
+
+                if(!isWhitespace(document.substr(q,p-q)))
+                    break;
+
                 p=q;
             }
 
             while(p>0)
             {
                 std::size_t q=previousUTF8(document,p);
-                if(isWhitespace(document.substr(q,p-q))) break;
+
+                if(isWhitespace(document.substr(q,p-q)))
+                    break;
+
                 p=q;
             }
 
             if(p==cursorPosition) return;
 
             pushUndo();
+
             const std::size_t len=cursorPosition-p;
 
             std::map<std::size_t,TextStyle> styles;
+
             for(const auto&e:characterStyles)
             {
-                if(e.first<p) styles[e.first]=e.second;
-                else if(e.first>=cursorPosition) styles[e.first-len]=e.second;
+                if(e.first<p)
+                    styles[e.first]=e.second;
+                else if(e.first>=cursorPosition)
+                    styles[e.first-len]=e.second;
             }
 
             characterStyles.swap(styles);
@@ -760,29 +890,37 @@ namespace
 
             for(const auto&e:paragraphIndents)
             {
-                if(e.first>p&&e.first<=cursorPosition) continue;
+                if(e.first>p && e.first<=cursorPosition) continue;
+
                 indents[e.first>cursorPosition?e.first-len:e.first]=e.second;
             }
+
             for(const auto&e:paragraphAlignments)
             {
-                if(e.first>p&&e.first<=cursorPosition) continue;
+                if(e.first>p && e.first<=cursorPosition) continue;
+
                 alignments[e.first>cursorPosition?e.first-len:e.first]=e.second;
             }
+
             for(const auto&e:paragraphLineSpacing)
             {
-                if(e.first>p&&e.first<=cursorPosition) continue;
+                if(e.first>p && e.first<=cursorPosition) continue;
+
                 spacings[e.first>cursorPosition?e.first-len:e.first]=e.second;
             }
 
             document.erase(p,len);
+
             paragraphIndents.swap(indents);
             paragraphAlignments.swap(alignments);
             paragraphLineSpacing.swap(spacings);
+
             cursorPosition=p;
             clearSelection();
         }
 
         preferredVerticalColumn=-1;
+
         buildVisualLines();
         updateScroll();
         markModified();
@@ -800,25 +938,33 @@ namespace
             if(!cursorPosition) return;
 
             const std::size_t start=getLogicalLineStart(cursorPosition);
+
             std::size_t a=start,b=cursorPosition;
 
             if(a==b)
             {
                 a=previousUTF8(document,cursorPosition);
-                if(!isSeparator(document[a])) return;
+
+                if(!isSeparator(document[a]))
+                    return;
+
                 b=cursorPosition;
             }
 
             if(a==b) return;
 
             pushUndo();
+
             const std::size_t len=b-a;
 
             std::map<std::size_t,TextStyle> styles;
+
             for(const auto&e:characterStyles)
             {
-                if(e.first<a) styles[e.first]=e.second;
-                else if(e.first>=b) styles[e.first-len]=e.second;
+                if(e.first<a)
+                    styles[e.first]=e.second;
+                else if(e.first>=b)
+                    styles[e.first-len]=e.second;
             }
 
             characterStyles.swap(styles);
@@ -829,37 +975,56 @@ namespace
 
             for(const auto&e:paragraphIndents)
             {
-                if(e.first>a&&e.first<=b) continue;
+                if(e.first>a && e.first<=b) continue;
+
                 indents[e.first>b?e.first-len:e.first]=e.second;
             }
+
             for(const auto&e:paragraphAlignments)
             {
-                if(e.first>a&&e.first<=b) continue;
+                if(e.first>a && e.first<=b) continue;
+
                 alignments[e.first>b?e.first-len:e.first]=e.second;
             }
+
             for(const auto&e:paragraphLineSpacing)
             {
-                if(e.first>a&&e.first<=b) continue;
+                if(e.first>a && e.first<=b) continue;
+
                 spacings[e.first>b?e.first-len:e.first]=e.second;
             }
 
             document.erase(a,len);
+
             paragraphIndents.swap(indents);
             paragraphAlignments.swap(alignments);
             paragraphLineSpacing.swap(spacings);
+
             cursorPosition=a;
             clearSelection();
         }
 
         preferredVerticalColumn=-1;
+
         buildVisualLines();
         updateScroll();
         markModified();
     }
 
-    void insertLineBreak(){insertCharacter("\v");}
-    void insertParagraphBreak(){insertCharacter("\n");}
-    void insertPageBreak(){insertCharacter("\f");}
+    void insertLineBreak()
+    {
+        insertCharacter("\v");
+    }
+
+    void insertParagraphBreak()
+    {
+        insertCharacter("\n");
+    }
+
+    void insertPageBreak()
+    {
+        insertCharacter("\f");
+    }
 
     void prepareCursorMovement(bool selecting)
     {
@@ -900,6 +1065,7 @@ namespace
             cursorPosition=nextUTF8(document,cursorPosition);
 
         preferredVerticalColumn=-1;
+
         finishCursorMovement();
     }
 
@@ -915,12 +1081,13 @@ namespace
 
     std::size_t getPositionAtColumn(std::size_t line,int column)
     {
-        if(line>=visualLines.size()) return document.size();
+        if(line>=visualLines.size())
+            return document.size();
 
         std::size_t p=visualLines[line].first;
         const std::size_t end=visualLines[line].second;
 
-        while(column>0&&p<end)
+        while(column>0 && p<end)
         {
             p=nextUTF8(document,p);
             --column;
@@ -946,14 +1113,17 @@ namespace
 
         if(direction<0)
         {
-            if(targetLine>0) --targetLine;
+            if(targetLine>0)
+                --targetLine;
         }
         else
         {
-            if(targetLine+1<visualLines.size()) ++targetLine;
+            if(targetLine+1<visualLines.size())
+                ++targetLine;
         }
 
         cursorPosition=getPositionAtColumn(targetLine,preferredVerticalColumn);
+
         finishCursorMovement();
     }
 
@@ -965,9 +1135,14 @@ namespace
         const std::size_t line=findCursorLine();
 
         if(!visualLines.empty())
-            cursorPosition=toEnd?visualLines[line].second:visualLines[line].first;
+        {
+            cursorPosition=toEnd
+                ?visualLines[line].second
+                :visualLines[line].first;
+        }
 
         preferredVerticalColumn=-1;
+
         finishCursorMovement();
     }
 
@@ -980,6 +1155,7 @@ namespace
             :getParagraphStart(cursorPosition);
 
         preferredVerticalColumn=-1;
+
         finishCursorMovement();
     }
 
@@ -992,14 +1168,20 @@ namespace
             while(cursorPosition>0)
             {
                 const std::size_t p=previousUTF8(document,cursorPosition);
-                if(!isWhitespace(document.substr(p,cursorPosition-p))) break;
+
+                if(!isWhitespace(document.substr(p,cursorPosition-p)))
+                    break;
+
                 cursorPosition=p;
             }
 
             while(cursorPosition>0)
             {
                 const std::size_t p=previousUTF8(document,cursorPosition);
-                if(isWhitespace(document.substr(p,cursorPosition-p))) break;
+
+                if(isWhitespace(document.substr(p,cursorPosition-p)))
+                    break;
+
                 cursorPosition=p;
             }
         }
@@ -1008,19 +1190,26 @@ namespace
             while(cursorPosition<document.size())
             {
                 const std::size_t p=nextUTF8(document,cursorPosition);
-                if(!isWhitespace(document.substr(cursorPosition,p-cursorPosition))) break;
+
+                if(!isWhitespace(document.substr(cursorPosition,p-cursorPosition)))
+                    break;
+
                 cursorPosition=p;
             }
 
             while(cursorPosition<document.size())
             {
                 const std::size_t p=nextUTF8(document,cursorPosition);
-                if(isWhitespace(document.substr(cursorPosition,p-cursorPosition))) break;
+
+                if(isWhitespace(document.substr(cursorPosition,p-cursorPosition)))
+                    break;
+
                 cursorPosition=p;
             }
         }
 
         preferredVerticalColumn=-1;
+
         finishCursorMovement();
     }
 
@@ -1031,25 +1220,35 @@ namespace
         while(a>0)
         {
             auto p=previousUTF8(document,a);
-            if(isWhitespace(document.substr(p,a-p))) break;
+
+            if(isWhitespace(document.substr(p,a-p)))
+                break;
+
             a=p;
         }
 
         while(b<document.size())
         {
             auto n=nextUTF8(document,b);
-            if(isWhitespace(document.substr(b,n-b))) break;
+
+            if(isWhitespace(document.substr(b,n-b)))
+                break;
+
             b=n;
         }
 
         std::string w=document.substr(a,b-a);
-        if(!pendingDeadKey.empty()) w+=pendingDeadKey;
+
+        if(!pendingDeadKey.empty())
+            w+=pendingDeadKey;
+
         return w;
     }
 
     void changeAlignment()
     {
         const int next=(getParagraphAlignment(cursorPosition)+1)%4;
+
         pushUndo();
 
         if(!hasSelection)
@@ -1063,11 +1262,16 @@ namespace
 
             for(std::size_t p=a;p<=b;)
             {
-                if(p==b&&b>a&&selectionEnd()==b) break;
+                if(p==b && b>a && selectionEnd()==b)
+                    break;
+
                 paragraphAlignments[p]=next;
 
                 const std::size_t end=getParagraphEnd(p);
-                if(end>=document.size()) break;
+
+                if(end>=document.size())
+                    break;
+
                 p=end+1;
             }
         }
@@ -1078,14 +1282,19 @@ namespace
     void changeLineSpacing()
     {
         static const float values[]={1.0f,1.2f,1.5f,2.0f};
+
         const float current=getParagraphSpacing(cursorPosition);
 
         int index=0;
+
         for(int i=0;i<4;++i)
+        {
             if(std::abs(values[i]-current)<0.001f)
                 index=i;
+        }
 
         const float next=values[(index+1)%4];
+
         pushUndo();
 
         if(!hasSelection)
@@ -1099,11 +1308,16 @@ namespace
 
             for(std::size_t p=a;p<=b;)
             {
-                if(p==b&&b>a&&selectionEnd()==b) break;
+                if(p==b && b>a && selectionEnd()==b)
+                    break;
+
                 paragraphLineSpacing[p]=next;
 
                 const std::size_t end=getParagraphEnd(p);
-                if(end>=document.size()) break;
+
+                if(end>=document.size())
+                    break;
+
                 p=end+1;
             }
         }
@@ -1130,7 +1344,7 @@ namespace
         {
             auto it=characterStyles.find(p);
 
-            if(it==characterStyles.end()||!(it->second.*member))
+            if(it==characterStyles.end() || !(it->second.*member))
             {
                 all=false;
                 break;
@@ -1151,13 +1365,12 @@ namespace
         markModified();
     }
 
-    // El estado visual de la barra refleja el formato del carácter bajo
-    // el cursor. Al final del documento se muestra el formato de escritura.
     TextStyle getCursorStyle()
     {
         if(cursorPosition<document.size())
         {
             auto it=characterStyles.find(cursorPosition);
+
             if(it!=characterStyles.end())
                 return it->second;
         }
@@ -1168,53 +1381,136 @@ namespace
         return {};
     }
 
-    void drawText(const char* s,float x,float y,float scale,u32 color)
+    // El parámetro de profundidad permite colocar texto delante de los
+    // fondos de las barras de información y delante del resaltado.
+    void drawText(const char* s,float x,float y,float scale,u32 color,
+                  float depth=0.45f)
     {
         C2D_Text t;
+
         C2D_TextParse(&t,textBuffer,s);
         C2D_TextOptimize(&t);
-        C2D_DrawText(&t,C2D_WithColor,x,y,0.5f,scale,scale,color);
+
+        C2D_DrawText(
+            &t,C2D_WithColor,x,y,depth,scale,scale,color
+        );
     }
 
-    void drawItalicText(const char* s,float x,float y,float scale,u32 color)
+    void drawItalicText(const char* s,float x,float y,float scale,u32 color,
+                        float depth=0.45f)
     {
         C2D_Text t;
+
         C2D_TextParse(&t,textBuffer,s);
         C2D_TextOptimize(&t);
 
         C3D_Mtx previousMatrix;
+
         C2D_ViewSave(&previousMatrix);
 
         C2D_ViewTranslate(x,y);
         C2D_ViewShear(-0.22f,0.0f);
         C2D_ViewTranslate(-x,-y);
 
-        C2D_DrawText(&t,C2D_WithColor,x,y,0.5f,scale,scale,color);
+        C2D_DrawText(
+            &t,C2D_WithColor,x,y,depth,scale,scale,color
+        );
 
         C2D_Flush();
         C2D_ViewRestore(&previousMatrix);
+    }
+
+    float measureTextWidthAtScale(const std::string& s,float scale)
+    {
+        if(s.empty()) return 0.0f;
+
+        C2D_Text t;
+
+        C2D_TextParse(&t,textBuffer,s.c_str());
+        C2D_TextOptimize(&t);
+
+        float w=0.0f;
+
+        C2D_TextGetDimensions(&t,scale,scale,&w,nullptr);
+
+        return w;
     }
 
     float measureTextWidth(const std::string& s)
     {
         if(s.empty()) return 0.0f;
 
-        C2D_Text t;
-        C2D_TextParse(&t,textBuffer,s.c_str());
-        C2D_TextOptimize(&t);
+        float width=0.0f;
+        const float spaceWidth=measureTextWidthAtScale(" ",TEXT_SCALE);
 
-        float w=0;
-        C2D_TextGetDimensions(&t,TEXT_SCALE,TEXT_SCALE,&w,nullptr);
-        return w;
+        for(std::size_t p=0;p<s.size();)
+        {
+            const std::size_t q=nextUTF8(s,p);
+            const std::string ch=s.substr(p,q-p);
+
+            if(ch=="\t")
+            {
+                // Una tabulación equivale a cuatro espacios.
+                width+=spaceWidth*4.0f;
+            }
+            else if(ch!="\n" && ch!="\v" && ch!="\f")
+            {
+                width+=measureTextWidthAtScale(ch,TEXT_SCALE);
+            }
+
+            p=q;
+        }
+
+        return width;
     }
 
     void drawPage()
     {
-        C2D_DrawRectSolid(PAGE_X,PAGE_Y,0.5f,PAGE_WIDTH,PAGE_HEIGHT,COLOR_PAPEL);
-        C2D_DrawRectSolid(PAGE_X,PAGE_Y,0.6f,PAGE_WIDTH,1,COLOR_BORDE);
-        C2D_DrawRectSolid(PAGE_X,PAGE_Y+PAGE_HEIGHT-1,0.6f,PAGE_WIDTH,1,COLOR_BORDE);
-        C2D_DrawRectSolid(PAGE_X,PAGE_Y,0.6f,1,PAGE_HEIGHT,COLOR_BORDE);
-        C2D_DrawRectSolid(PAGE_X+PAGE_WIDTH-1,PAGE_Y,0.6f,1,PAGE_HEIGHT,COLOR_BORDE);
+        C2D_DrawRectSolid(
+            PAGE_X,PAGE_Y,0.5f,PAGE_WIDTH,PAGE_HEIGHT,COLOR_PAPEL
+        );
+
+        C2D_DrawRectSolid(
+            PAGE_X,PAGE_Y,0.6f,PAGE_WIDTH,1,COLOR_BORDE
+        );
+
+        C2D_DrawRectSolid(
+            PAGE_X,PAGE_Y+PAGE_HEIGHT-1,0.6f,PAGE_WIDTH,1,COLOR_BORDE
+        );
+
+        C2D_DrawRectSolid(
+            PAGE_X,PAGE_Y,0.6f,1,PAGE_HEIGHT,COLOR_BORDE
+        );
+
+        C2D_DrawRectSolid(
+            PAGE_X+PAGE_WIDTH-1,PAGE_Y,0.6f,1,PAGE_HEIGHT,COLOR_BORDE
+        );
+    }
+
+    void drawTabMark(float x,float y,float width)
+    {
+        const float cy=y+6.0f;
+        const float end=x+std::min(width-2.0f,14.0f);
+
+        if(end<=x+2.0f) return;
+
+        // Línea horizontal de la flecha.
+        C2D_DrawRectSolid(
+            x,cy,0.30f,end-x,1.1f,COLOR_MUSGO
+        );
+
+        // Punta de flecha.
+        C2D_DrawRectSolid(
+            end-3.0f,cy-2.0f,0.30f,1.1f,5.0f,COLOR_MUSGO
+        );
+
+        C2D_DrawRectSolid(
+            end-3.0f,cy-2.0f,0.30f,3.0f,1.1f,COLOR_MUSGO
+        );
+
+        C2D_DrawRectSolid(
+            end-3.0f,cy+2.0f,0.30f,3.0f,1.1f,COLOR_MUSGO
+        );
     }
 
     void drawStyledLine(std::size_t start,std::size_t end,float x,float y,
@@ -1226,9 +1522,21 @@ namespace
         {
             const std::size_t q=nextUTF8(document,p);
             const std::string ch=document.substr(p,q-p);
+
             const auto it=characterStyles.find(p);
             const TextStyle st=it==characterStyles.end()?TextStyle{}:it->second;
+
             const float w=measureTextWidth(ch);
+
+            if(ch=="\t")
+            {
+                if(showParagraphMarks)
+                    drawTabMark(x,y,w);
+
+                x+=w;
+                p=q;
+                continue;
+            }
 
             if(st.italic)
                 drawItalicText(ch.c_str(),x,y,TEXT_SCALE,COLOR_CARBON);
@@ -1238,20 +1546,27 @@ namespace
             if(st.bold)
             {
                 if(st.italic)
-                    drawItalicText(ch.c_str(),x+0.45f,y,TEXT_SCALE,COLOR_CARBON);
+                    drawItalicText(
+                        ch.c_str(),x+0.45f,y,TEXT_SCALE,COLOR_CARBON
+                    );
                 else
-                    drawText(ch.c_str(),x+0.45f,y,TEXT_SCALE,COLOR_CARBON);
+                    drawText(
+                        ch.c_str(),x+0.45f,y,TEXT_SCALE,COLOR_CARBON
+                    );
             }
 
             if(st.underline)
             {
                 C2D_DrawRectSolid(
-                    x,y+14.0f,0.7f,std::max(1.0f,w),1.0f,COLOR_CARBON
+                    x,y+14.0f,0.30f,std::max(1.0f,w),1.0f,COLOR_CARBON
                 );
             }
 
             x+=w;
-            if(ch==" ") x+=extraSpace;
+
+            if(ch==" ")
+                x+=extraSpace;
+
             p=q;
         }
     }
@@ -1264,22 +1579,22 @@ namespace
         {
             const float t=1.25f;
 
-            C2D_DrawRectSolid(x+1.0f,cy-5.0f,0.8f,t,11.0f,COLOR_MUSGO);
-            C2D_DrawRectSolid(x+1.0f,cy-5.0f,0.8f,7.0f,t,COLOR_MUSGO);
-            C2D_DrawRectSolid(x+7.0f,cy-5.0f,0.8f,t,5.5f,COLOR_MUSGO);
-            C2D_DrawRectSolid(x+1.0f,cy+0.0f,0.8f,7.0f,t,COLOR_MUSGO);
-            C2D_DrawRectSolid(x+5.0f,cy+0.0f,0.8f,t,6.0f,COLOR_MUSGO);
+            C2D_DrawRectSolid(x+1.0f,cy-5.0f,0.30f,t,11.0f,COLOR_MUSGO);
+            C2D_DrawRectSolid(x+1.0f,cy-5.0f,0.30f,7.0f,t,COLOR_MUSGO);
+            C2D_DrawRectSolid(x+7.0f,cy-5.0f,0.30f,t,5.5f,COLOR_MUSGO);
+            C2D_DrawRectSolid(x+1.0f,cy+0.0f,0.30f,7.0f,t,COLOR_MUSGO);
+            C2D_DrawRectSolid(x+5.0f,cy+0.0f,0.30f,t,6.0f,COLOR_MUSGO);
         }
         else if(separator=='\v')
         {
             const float t=1.3f;
 
-            C2D_DrawRectSolid(x+1.0f,cy-4.0f,0.8f,9.0f,t,COLOR_MUSGO);
-            C2D_DrawRectSolid(x+9.0f,cy-4.0f,0.8f,t,8.0f,COLOR_MUSGO);
-            C2D_DrawRectSolid(x+5.0f,cy+2.8f,0.8f,4.5f,t,COLOR_MUSGO);
-            C2D_DrawRectSolid(x+5.0f,cy+1.0f,0.8f,t,2.0f,COLOR_MUSGO);
-            C2D_DrawRectSolid(x+4.0f,cy+2.0f,0.8f,t,1.0f,COLOR_MUSGO);
-            C2D_DrawRectSolid(x+3.0f,cy+3.0f,0.8f,t,1.0f,COLOR_MUSGO);
+            C2D_DrawRectSolid(x+1.0f,cy-4.0f,0.30f,9.0f,t,COLOR_MUSGO);
+            C2D_DrawRectSolid(x+9.0f,cy-4.0f,0.30f,t,8.0f,COLOR_MUSGO);
+            C2D_DrawRectSolid(x+5.0f,cy+2.8f,0.30f,4.5f,t,COLOR_MUSGO);
+            C2D_DrawRectSolid(x+5.0f,cy+1.0f,0.30f,t,2.0f,COLOR_MUSGO);
+            C2D_DrawRectSolid(x+4.0f,cy+2.0f,0.30f,t,1.0f,COLOR_MUSGO);
+            C2D_DrawRectSolid(x+3.0f,cy+3.0f,0.30f,t,1.0f,COLOR_MUSGO);
         }
         else if(separator=='\f')
         {
@@ -1289,20 +1604,22 @@ namespace
 
             for(float px=TEXT_X;px<TEXT_X+TEXT_WIDTH;px+=6.0f)
             {
-                if(px>=labelX-3.0f&&px<labelX+labelWidth+3.0f)
+                if(px>=labelX-3.0f && px<labelX+labelWidth+3.0f)
                     continue;
 
                 C2D_DrawRectSolid(
-                    px,lineY,0.8f,3.0f,1.0f,COLOR_MUSGO
+                    px,lineY,0.30f,3.0f,1.0f,COLOR_MUSGO
                 );
             }
 
             C2D_DrawRectSolid(
-                labelX-2.0f,cy-3.0f,0.7f,labelWidth+4.0f,9.0f,
+                labelX-2.0f,cy-3.0f,0.25f,labelWidth+4.0f,9.0f,
                 COLOR_PAPEL
             );
 
-            drawText("Salto de página",labelX,cy-2.5f,0.28f,COLOR_MUSGO);
+            drawText(
+                "Salto de página",labelX,cy-2.5f,0.28f,COLOR_MUSGO
+            );
         }
     }
 
@@ -1313,6 +1630,7 @@ namespace
 
         if(alignment==1)
             return baseX+std::max(0.0f,TEXT_WIDTH-lineWidth);
+
         if(alignment==2)
             return baseX+std::max(0.0f,(TEXT_WIDTH-lineWidth)*0.5f);
 
@@ -1321,21 +1639,29 @@ namespace
 
     float getJustificationExtra(std::size_t a,std::size_t b,float lineWidth)
     {
-        if(getParagraphAlignment(a)!=3) return 0.0f;
+        if(getParagraphAlignment(a)!=3)
+            return 0.0f;
 
-        const bool isLastLine=(b>=document.size()||isSeparator(document[b]));
-        if(isLastLine) return 0.0f;
+        const bool isLastLine=(b>=document.size() || isSeparator(document[b]));
+
+        if(isLastLine)
+            return 0.0f;
 
         std::size_t spaces=0;
 
         for(std::size_t p=a;p<b;)
         {
             const std::size_t q=nextUTF8(document,p);
-            if(document.substr(p,q-p)==" ") ++spaces;
+
+            if(document.substr(p,q-p)==" ")
+                ++spaces;
+
             p=q;
         }
 
-        if(!spaces||lineWidth>=TEXT_WIDTH) return 0.0f;
+        if(!spaces || lineWidth>=TEXT_WIDTH)
+            return 0.0f;
+
         return (TEXT_WIDTH-lineWidth)/spaces;
     }
 
@@ -1343,24 +1669,34 @@ namespace
     {
         const std::size_t a=visualLines[line].first;
         const std::size_t b=visualLines[line].second;
+
         const std::string whole=document.substr(a,b-a);
         const float width=measureTextWidth(whole);
+
         float x=getAlignedLineX(a,width);
+
         const std::string before=document.substr(a,cursorPosition-a);
+
         x+=measureTextWidth(before);
 
         if(getParagraphAlignment(a)==3)
         {
             const float extra=getJustificationExtra(a,b,width);
+
             if(extra>0.0f)
             {
                 std::size_t spaces=0;
+
                 for(std::size_t p=a;p<cursorPosition;)
                 {
                     const std::size_t q=nextUTF8(document,p);
-                    if(document.substr(p,q-p)==" ") ++spaces;
+
+                    if(document.substr(p,q-p)==" ")
+                        ++spaces;
+
                     p=q;
                 }
+
                 x+=spaces*extra;
             }
         }
@@ -1376,13 +1712,14 @@ namespace
         for(int i=0;i<VISIBLE_LINES;++i)
         {
             const std::size_t li=firstVisibleLine+i;
-            if(li>=visualLines.size()) break;
+
+            if(li>=visualLines.size())
+                break;
 
             const std::size_t a=visualLines[li].first;
             const std::size_t b=visualLines[li].second;
             const float y=getLineY(li);
 
-            // No dibujar texto bajo el margen inferior de la página/HUD.
             if(y+11.0f>TEXT_BOTTOM)
                 break;
 
@@ -1401,9 +1738,11 @@ namespace
                     const std::string before=document.substr(a,sa-a);
                     const std::string selected=document.substr(sa,sb-sa);
 
+                    // La página está a profundidad 0.5. El resaltado queda
+                    // delante de ella y el texto se dibuja aún más adelante.
                     C2D_DrawRectSolid(
-                        x+measureTextWidth(before),y,0.4f,
-                        std::max(1.0f,measureTextWidth(selected)),11,
+                        x+measureTextWidth(before),y,0.47f,
+                        std::max(1.0f,measureTextWidth(selected)),11.0f,
                         COLOR_SELECCION
                     );
                 }
@@ -1411,11 +1750,18 @@ namespace
 
             drawStyledLine(a,b,x,y,extraSpace);
 
-            if(showParagraphMarks&&b<document.size()&&isSeparator(document[b]))
+            if(showParagraphMarks &&
+               b<document.size() &&
+               isSeparator(document[b]))
+            {
                 drawParagraphMark(document[b],x+lineWidth+2.0f,y);
+            }
 
-            if(showParagraphMarks&&a==b&&a==document.size()&&
-               !document.empty()&&document.back()=='\n')
+            if(showParagraphMarks &&
+               a==b &&
+               a==document.size() &&
+               !document.empty() &&
+               document.back()=='\n')
             {
                 drawParagraphMark('\n',x,y);
             }
@@ -1423,7 +1769,8 @@ namespace
 
         const std::size_t line=findCursorLine();
 
-        if(line>=firstVisibleLine&&line<firstVisibleLine+VISIBLE_LINES)
+        if(line>=firstVisibleLine &&
+           line<firstVisibleLine+VISIBLE_LINES)
         {
             const float x=getCursorX(line);
             const float y=getLineY(line);
@@ -1431,7 +1778,9 @@ namespace
             if(y+10.0f<=TEXT_BOTTOM &&
                (osGetTime()/CURSOR_BLINK_INTERVAL)%2==0)
             {
-                C2D_DrawRectSolid(x,y,0.7f,1.5f,10,COLOR_MUSGO);
+                C2D_DrawRectSolid(
+                    x,y,0.30f,1.5f,10.0f,COLOR_MUSGO
+                );
             }
         }
     }
@@ -1446,7 +1795,8 @@ namespace
         };
     }
 
-    void drawKey(const KeyRect&r,const char*label,bool active=false,float scale=0.48f)
+    void drawKey(const KeyRect&r,const char*label,bool active=false,
+                 float scale=0.48f)
     {
         C2D_DrawRectSolid(
             r.x,r.y,0.5f,r.width,r.height,COLOR_TECLA_BORDE
@@ -1478,13 +1828,15 @@ namespace
             1.0f,r.height-2.0f,COLOR_TECLA_LATERAL
         );
 
-        if(label&&label[0])
+        if(label && label[0])
         {
             C2D_Text t;
+
             C2D_TextParse(&t,textBuffer,label);
             C2D_TextOptimize(&t);
 
             float w=0,h=0;
+
             C2D_TextGetDimensions(&t,scale,scale,&w,&h);
 
             C2D_DrawText(
@@ -1499,11 +1851,15 @@ namespace
     {
         if(k.letter)
         {
-            if(alt&&k.altGr[0]) return k.altGr;
+            if(alt && k.altGr[0])
+                return k.altGr;
+
             return (caps!=shift)?k.shift:k.base;
         }
 
-        if(alt&&k.altGr[0]) return k.altGr;
+        if(alt && k.altGr[0])
+            return k.altGr;
+
         return shift?k.shift:k.base;
     }
 
@@ -1516,15 +1872,19 @@ namespace
             {21,21,21}
         };
 
+        const int alignment=getParagraphAlignment(cursorPosition);
+
         for(int i=0;i<3;++i)
         {
-            const int alignment=getParagraphAlignment(cursorPosition);
             const float w=widths[alignment][i];
+
             const float px=alignment==0?x:
                            alignment==1?x+21-w:
                            alignment==2?x+(21-w)*0.5f:x;
 
-            C2D_DrawRectSolid(px,y+i*4.0f,0.8f,w,1.5f,COLOR_CARBON);
+            C2D_DrawRectSolid(
+                px,y+i*4.0f,0.8f,w,1.5f,COLOR_CARBON
+            );
         }
     }
 
@@ -1535,6 +1895,7 @@ namespace
         for(int i=0;i<7;++i)
         {
             const float x=4.0f+i*45.0f;
+
             const bool active=
                 i==0?cursorStyle.bold:
                 i==1?cursorStyle.italic:
@@ -1550,6 +1911,7 @@ namespace
                 case 1: label="K"; break;
                 case 2: label="S"; break;
                 case 3: label=""; break;
+
                 case 4:
                     std::snprintf(
                         spacing,sizeof(spacing),"%.1f",
@@ -1557,11 +1919,15 @@ namespace
                     );
                     label=spacing;
                     break;
+
                 case 5: label="Aa"; break;
                 case 6: label="¶"; break;
             }
 
-            drawKey({x,3,43,19},label,active,i==5?0.42f:0.40f);
+            drawKey(
+                {x,3,43,19},label,active,
+                i==5?0.42f:0.40f
+            );
 
             if(i==3)
                 drawAlignmentIcon(x+11.0f,6.0f);
@@ -1571,9 +1937,14 @@ namespace
     bool isDeadKeyActive(int key)
     {
         if(key==39)
-            return pendingDeadKey=="´"||pendingDeadKey=="¨"||pendingDeadKey=="`";
+        {
+            return pendingDeadKey=="´" ||
+                   pendingDeadKey=="¨" ||
+                   pendingDeadKey=="`";
+        }
 
-        if(key==9)
+        // La tecla muerta ^ corresponde ahora a ZL + 9.
+        if(key==48)
             return pendingDeadKey=="^";
 
         return false;
@@ -1582,6 +1953,7 @@ namespace
     void drawEnterKey(bool shift,bool alt)
     {
         const char* label=alt?"PAG":(shift?"PAR":"ENT");
+
         const KeyRect r={
             KEY_SPECIAL_X,
             KEY_START_Y+KEY_ROW_STEP,
@@ -1603,13 +1975,12 @@ namespace
                 drawKey(
                     getKeyRect(r,c),
                     getKeyLabel(keyboard[r][c],shift,alt,capsLock),
-                    activeTouchKey==key||isDeadKeyActive(key),
+                    activeTouchKey==key || isDeadKeyActive(key),
                     0.50f
                 );
             }
         }
 
-        // La tecla de retroceso indica la operación asociada al modificador.
         const char* deleteLabel=alt?"LINE":(shift?"WORD":"DEL");
 
         drawKey(
@@ -1633,34 +2004,122 @@ namespace
         );
     }
 
+    // Previsualización de la palabra actual: calcula el ancho carácter a
+    // carácter y aplica los estilos guardados para cada posición del texto.
+    void drawFormattedPreview(const std::string& word,float centerX,float y)
+    {
+        if(word.empty()) return;
+
+        constexpr float PREVIEW_SCALE=0.82f;
+        constexpr float MAX_WIDTH=300.0f;
+
+        float naturalWidth=0.0f;
+
+        for(std::size_t p=0;p<word.size();)
+        {
+            const std::size_t q=nextUTF8(word,p);
+            naturalWidth+=measureTextWidthAtScale(
+                word.substr(p,q-p),PREVIEW_SCALE
+            );
+            p=q;
+        }
+
+        const float scale=PREVIEW_SCALE*
+            std::min(1.0f,MAX_WIDTH/std::max(1.0f,naturalWidth));
+
+        float totalWidth=0.0f;
+
+        for(std::size_t p=0;p<word.size();)
+        {
+            const std::size_t q=nextUTF8(word,p);
+            totalWidth+=measureTextWidthAtScale(
+                word.substr(p,q-p),scale
+            );
+            p=q;
+        }
+
+        float x=centerX-totalWidth*0.5f;
+
+        for(std::size_t p=0;p<word.size();)
+        {
+            const std::size_t q=nextUTF8(word,p);
+            const std::string ch=word.substr(p,q-p);
+
+            const float w=measureTextWidthAtScale(ch,scale);
+
+            TextStyle style{};
+
+            auto it=characterStyles.find(p);
+
+            if(it!=characterStyles.end())
+                style=it->second;
+            else if(p>=document.size())
+                style={boldEnabled,italicEnabled,underlineEnabled};
+
+            if(style.italic)
+                drawItalicText(ch.c_str(),x,y,scale,COLOR_CARBON);
+            else
+                drawText(ch.c_str(),x,y,scale,COLOR_CARBON);
+
+            if(style.bold)
+            {
+                if(style.italic)
+                    drawItalicText(
+                        ch.c_str(),x+0.55f,y,scale,COLOR_CARBON
+                    );
+                else
+                    drawText(
+                        ch.c_str(),x+0.55f,y,scale,COLOR_CARBON
+                    );
+            }
+
+            if(style.underline)
+            {
+                C2D_DrawRectSolid(
+                    x,y+17.0f,0.30f,std::max(1.0f,w),1.2f,COLOR_CARBON
+                );
+            }
+
+            x+=w;
+            p=q;
+        }
+
+        // La tecla muerta pendiente también se muestra al final de la palabra.
+        if(!pendingDeadKey.empty())
+        {
+            const float w=measureTextWidthAtScale(
+                pendingDeadKey,scale
+            );
+
+            drawText(
+                pendingDeadKey.c_str(),x,y,scale,COLOR_CARBON
+            );
+
+            x+=w;
+        }
+    }
+
     void drawWordViewer()
     {
-        C2D_DrawRectSolid(5,27,0.5f,310,49,COLOR_BORDE);
-        C2D_DrawRectSolid(6,28,0.6f,308,47,COLOR_PAPEL);
+        C2D_DrawRectSolid(
+            5,27,0.5f,310,49,COLOR_BORDE
+        );
+
+        C2D_DrawRectSolid(
+            6,28,0.6f,308,47,COLOR_PAPEL
+        );
 
         const std::string word=getCurrentWord();
 
         if(word.empty())
         {
-            drawText("Palabra actual",10,43,0.42f,COLOR_SECUNDARIO);
+            drawText(
+                "Palabra actual",10,43,0.42f,COLOR_SECUNDARIO
+            );
             return;
         }
 
-        C2D_Text t;
-        C2D_TextParse(&t,textBuffer,word.c_str());
-        C2D_TextOptimize(&t);
-
-        float w=0,h=0;
-        C2D_TextGetDimensions(&t,0.82f,0.82f,&w,&h);
-
-        const float scale=std::min(0.82f,300.0f/std::max(1.0f,w)*0.82f);
-        C2D_TextGetDimensions(&t,scale,scale,&w,&h);
-
-        // La previsualización de la palabra se muestra siempre en negro.
-        C2D_DrawText(
-            &t,C2D_WithColor,(320.0f-w)*0.5f,41.0f,
-            0.8f,scale,scale,COLOR_CARBON
-        );
+        drawFormattedPreview(word,160.0f,41.0f);
     }
 
     std::size_t countWords()
@@ -1674,13 +2133,15 @@ namespace
             const std::string ch=document.substr(p,q-p);
             const bool space=isWhitespace(ch);
 
-            if(!space&&!inside)
+            if(!space && !inside)
             {
                 ++count;
                 inside=true;
             }
             else if(space)
+            {
                 inside=false;
+            }
 
             p=q;
         }
@@ -1694,38 +2155,87 @@ namespace
         std::tm localTime{};
 
         std::tm* current=std::localtime(&now);
-        if(current) localTime=*current;
+
+        if(current)
+            localTime=*current;
 
         char clock[16]="--:--";
-        std::strftime(clock,sizeof(clock),"%H:%M",&localTime);
 
-        u8 batteryLevel=0;
-        PTMU_GetBatteryLevel(&batteryLevel);
-        const int batteryPercent=std::min(100,static_cast<int>(batteryLevel)*20);
-
-        C2D_DrawRectSolid(0,0,0.9f,400,14,COLOR_BLANCO);
-        C2D_DrawRectSolid(0,226,0.9f,400,14,COLOR_BLANCO);
-
-        C2D_DrawRectSolid(0,0,0.95f,400,1,COLOR_INFO_BORDE);
-        C2D_DrawRectSolid(0,13,0.95f,400,1,COLOR_INFO_BORDE);
-        C2D_DrawRectSolid(0,0,0.95f,1,14,COLOR_INFO_BORDE);
-        C2D_DrawRectSolid(399,0,0.95f,1,14,COLOR_INFO_BORDE);
-
-        C2D_DrawRectSolid(0,226,0.95f,400,1,COLOR_INFO_BORDE);
-        C2D_DrawRectSolid(0,239,0.95f,400,1,COLOR_INFO_BORDE);
-        C2D_DrawRectSolid(0,226,0.95f,1,14,COLOR_INFO_BORDE);
-        C2D_DrawRectSolid(399,226,0.95f,1,14,COLOR_INFO_BORDE);
-
-        char batteryText[24];
-        std::snprintf(
-            batteryText,sizeof(batteryText),"Batería: %d%%",batteryPercent
+        std::strftime(
+            clock,sizeof(clock),"%H:%M",&localTime
         );
 
-        drawText(batteryText,5,2,0.32f,COLOR_CARBON);
-        drawText(clock,365,2,0.32f,COLOR_CARBON);
+        u8 batteryLevel=0;
+
+        PTMU_GetBatteryLevel(&batteryLevel);
+
+        const int batteryPercent=std::min(
+            100,static_cast<int>(batteryLevel)*20
+        );
+
+        // Las barras se colocan por delante de la página.
+        C2D_DrawRectSolid(
+            0,0,0.05f,400,14,COLOR_BLANCO
+        );
+
+        C2D_DrawRectSolid(
+            0,226,0.05f,400,14,COLOR_BLANCO
+        );
+
+        C2D_DrawRectSolid(
+            0,0,0.04f,400,1,COLOR_INFO_BORDE
+        );
+
+        C2D_DrawRectSolid(
+            0,13,0.04f,400,1,COLOR_INFO_BORDE
+        );
+
+        C2D_DrawRectSolid(
+            0,0,0.04f,1,14,COLOR_INFO_BORDE
+        );
+
+        C2D_DrawRectSolid(
+            399,0,0.04f,1,14,COLOR_INFO_BORDE
+        );
+
+        C2D_DrawRectSolid(
+            0,226,0.04f,400,1,COLOR_INFO_BORDE
+        );
+
+        C2D_DrawRectSolid(
+            0,239,0.04f,400,1,COLOR_INFO_BORDE
+        );
+
+        C2D_DrawRectSolid(
+            0,226,0.04f,1,14,COLOR_INFO_BORDE
+        );
+
+        C2D_DrawRectSolid(
+            399,226,0.04f,1,14,COLOR_INFO_BORDE
+        );
+
+        char batteryText[24];
+
+        std::snprintf(
+            batteryText,sizeof(batteryText),
+            "Batería: %d%%",batteryPercent
+        );
+
+        // El texto tiene una profundidad menor que el fondo para garantizar
+        // que permanezca visible sobre las barras.
+        drawText(
+            batteryText,5,1,0.32f,COLOR_CARBON,0.0f
+        );
+
+        drawText(
+            clock,365,1,0.32f,COLOR_CARBON,0.0f
+        );
 
         const std::size_t words=countWords();
-        const std::size_t characters=countCharacters(document,0,document.size());
+
+        const std::size_t characters=countCharacters(
+            document,0,document.size()
+        );
 
         const std::size_t pages=std::max<std::size_t>(
             1,(visualLines.size()+PAGE_LINES-1)/PAGE_LINES
@@ -1739,18 +2249,28 @@ namespace
             wordText,sizeof(wordText),"Palabras: %lu",
             static_cast<unsigned long>(words)
         );
+
         std::snprintf(
             characterText,sizeof(characterText),"Caracteres: %lu",
             static_cast<unsigned long>(characters)
         );
+
         std::snprintf(
             pageText,sizeof(pageText),"Páginas: %lu",
             static_cast<unsigned long>(pages)
         );
 
-        drawText(wordText,8,228,0.31f,COLOR_CARBON);
-        drawText(characterText,140,228,0.31f,COLOR_CARBON);
-        drawText(pageText,290,228,0.31f,COLOR_CARBON);
+        drawText(
+            wordText,8,227,0.31f,COLOR_CARBON,0.0f
+        );
+
+        drawText(
+            characterText,140,227,0.31f,COLOR_CARBON,0.0f
+        );
+
+        drawText(
+            pageText,290,227,0.31f,COLOR_CARBON,0.0f
+        );
     }
 
     void drawBottomScreen(bool shift,bool alt)
@@ -1766,25 +2286,25 @@ namespace
     void drawEditor(bool shift,bool alt)
     {
         C3D_FrameBegin(C3D_FRAME_SYNCDRAW);
+
         C2D_TextBufClear(textBuffer);
 
         C2D_TargetClear(topScreen,COLOR_CREMA);
         C2D_SceneBegin(topScreen);
+
         drawPage();
 
-        // Se construyen las líneas antes de calcular el número de páginas.
         buildVisualLines();
         updateScroll();
 
         drawDocument();
 
-        // Se dibujan las barras al final para que queden por encima de la página
-        // y del documento, y sus textos no sean tapados por otros elementos.
         if(hudVisible)
             drawInfoBars();
 
         C2D_TargetClear(bottomScreen,COLOR_CREMA);
         C2D_SceneBegin(bottomScreen);
+
         drawBottomScreen(shift,alt);
 
         C3D_FrameEnd(0);
@@ -1792,34 +2312,51 @@ namespace
 
     int getTouchedKey(float x,float y)
     {
-        if(y>=3&&y<=22)
+        if(y>=3 && y<=22)
         {
             for(int i=0;i<7;++i)
-                if(x>=4+i*45&&x<=47+i*45)
+            {
+                if(x>=4+i*45 && x<=47+i*45)
                     return 110+i;
+            }
         }
 
-        if(y>=KEY_START_Y&&y<=KEY_START_Y+KEY_HEIGHT&&
-           x>=KEY_SPECIAL_X&&x<=KEY_SPECIAL_X+KEY_SPECIAL_WIDTH)
+        if(y>=KEY_START_Y &&
+           y<=KEY_START_Y+KEY_HEIGHT &&
+           x>=KEY_SPECIAL_X &&
+           x<=KEY_SPECIAL_X+KEY_SPECIAL_WIDTH)
+        {
             return 103;
+        }
 
-        if(y>=KEY_START_Y+KEY_ROW_STEP&&
-           y<=KEY_START_Y+KEY_ROW_STEP+KEY_HEIGHT*2&&
-           x>=KEY_SPECIAL_X&&x<=KEY_SPECIAL_X+KEY_SPECIAL_WIDTH)
+        if(y>=KEY_START_Y+KEY_ROW_STEP &&
+           y<=KEY_START_Y+KEY_ROW_STEP+KEY_HEIGHT*2 &&
+           x>=KEY_SPECIAL_X &&
+           x<=KEY_SPECIAL_X+KEY_SPECIAL_WIDTH)
+        {
             return 104;
+        }
 
-        if(y>=185&&y<=212&&
-           x>=KEY_START_X&&x<=KEY_START_X+SPACE_KEY_WIDTH)
+        if(y>=185 && y<=212 &&
+           x>=KEY_START_X &&
+           x<=KEY_START_X+SPACE_KEY_WIDTH)
+        {
             return 101;
+        }
 
         for(int r=0;r<5;++r)
+        {
             for(int c=0;c<10;++c)
             {
                 const KeyRect q=getKeyRect(r,c);
 
-                if(x>=q.x&&x<=q.x+q.width&&y>=q.y&&y<=q.y+q.height)
+                if(x>=q.x && x<=q.x+q.width &&
+                   y>=q.y && y<=q.y+q.height)
+                {
                     return r*10+c;
+                }
             }
+        }
 
         return -1;
     }
@@ -1828,19 +2365,38 @@ namespace
     {
         switch(n)
         {
-            case 110:toggleStyle(&TextStyle::bold,boldEnabled);break;
-            case 111:toggleStyle(&TextStyle::italic,italicEnabled);break;
-            case 112:toggleStyle(&TextStyle::underline,underlineEnabled);break;
-            case 113:changeAlignment();break;
-            case 114:changeLineSpacing();break;
-            case 115:break;
-            case 116:showParagraphMarks=!showParagraphMarks;break;
+            case 110:
+                toggleStyle(&TextStyle::bold,boldEnabled);
+                break;
+
+            case 111:
+                toggleStyle(&TextStyle::italic,italicEnabled);
+                break;
+
+            case 112:
+                toggleStyle(&TextStyle::underline,underlineEnabled);
+                break;
+
+            case 113:
+                changeAlignment();
+                break;
+
+            case 114:
+                changeLineSpacing();
+                break;
+
+            case 115:
+                break;
+
+            case 116:
+                showParagraphMarks=!showParagraphMarks;
+                break;
         }
     }
 
     void activateKeyboardKey(int key,bool shift,bool alt)
     {
-        if(key>=110&&key<=116)
+        if(key>=110 && key<=116)
         {
             activateToolbar(key);
             return;
@@ -1848,73 +2404,93 @@ namespace
 
         if(key==103)
         {
-            if(alt) deleteLine();
-            else if(shift) deleteWord();
-            else backspace();
+            if(alt)
+                deleteLine();
+            else if(shift)
+                deleteWord();
+            else
+                backspace();
+
             return;
         }
 
         if(key==104)
         {
-            if(alt) insertPageBreak();
-            else if(shift) insertParagraphBreak();
-            else insertLineBreak();
+            if(alt)
+                insertPageBreak();
+            else if(shift)
+                insertParagraphBreak();
+            else
+                insertLineBreak();
+
             return;
         }
 
         if(key==101)
         {
-            if(shift&&alt) resetIndent();
-            else if(alt) increaseIndent();
-            else if(shift) insertTab();
-            else insertCharacter(" ");
+            if(shift && alt)
+                resetIndent();
+            else if(alt)
+                increaseIndent();
+            else if(shift)
+                insertTab();
+            else
+                insertCharacter(" ");
+
             return;
         }
 
-        if(key<0||key>=50) return;
+        if(key<0 || key>=50)
+            return;
 
-        const int r=key/10,c=key%10;
-        const KeyDefinition&k=keyboard[r][c];
+        const int r=key/10;
+        const int c=key%10;
 
-        if(key==37&&shift)
+        const KeyDefinition& k=keyboard[r][c];
+
+        // Coma: L + coma = punto y coma.
+        if(key==37 && shift)
         {
             insertCharacter(";");
             return;
         }
 
-        if(key==38&&alt)
+        // Punto: L + punto = dos puntos; ZL + punto = puntos suspensivos.
+        if(key==38 && alt)
         {
             insertCharacter("…");
             return;
         }
 
-        if(key==38&&shift)
+        if(key==38 && shift)
         {
             insertCharacter(":");
             return;
         }
 
-        if(r==3&&c==9)
+        // Teclas muertas de acento.
+        if(r==3 && c==9)
         {
             activateDeadKey(alt?"`":(shift?"¨":"´"));
             return;
         }
 
-        if(r==0&&c==9&&alt)
+        // ZL + 9 activa el circunflejo.
+        if(r==0 && c==8 && alt)
         {
             activateDeadKey("^");
             return;
         }
 
-        if(r==3&&c==2&&alt)
+        if(r==3 && c==2 && alt)
         {
             insertCharacter(shift?"Ç":"ç");
             return;
         }
 
-        const char*v=getKeyLabel(k,shift,alt,capsLock);
+        const char* v=getKeyLabel(k,shift,alt,capsLock);
 
-        if(v&&v[0])
+        if(v && v[0])
             insertCharacter(v);
     }
 
@@ -1930,6 +2506,7 @@ namespace
         }
 
         touchPosition t;
+
         hidTouchRead(&t);
 
         const int key=getTouchedKey(
@@ -1949,30 +2526,130 @@ namespace
         if(key!=activeTouchKey)
         {
             activeTouchKey=key;
+
             activateKeyboardKey(key,shift,alt);
+
             nextRepeatTime=now+KEY_REPEAT_DELAY;
         }
         else if(now>=nextRepeatTime)
         {
-            if(key<100||key==103||key==104)
+            if(key<100 || key==103 || key==104)
                 activateKeyboardKey(key,shift,alt);
 
             nextRepeatTime=now+KEY_REPEAT_INTERVAL;
+        }
+    }
+
+    void performNavigation(u32 key,bool shift)
+    {
+        if(key==KEY_LEFT)
+        {
+            if(shift)
+                moveCursorWord(-1,selectionMode);
+            else
+                moveCursorHorizontal(-1,selectionMode);
+        }
+        else if(key==KEY_RIGHT)
+        {
+            if(shift)
+                moveCursorWord(1,selectionMode);
+            else
+                moveCursorHorizontal(1,selectionMode);
+        }
+        else if(key==KEY_UP)
+        {
+            if(shift)
+                moveCursorToParagraphBoundary(false,selectionMode);
+            else
+                moveCursorVertical(-1,selectionMode);
+        }
+        else if(key==KEY_DOWN)
+        {
+            if(shift)
+                moveCursorToParagraphBoundary(true,selectionMode);
+            else
+                moveCursorVertical(1,selectionMode);
+        }
+    }
+
+    void processPhysicalNavigation(u32 pressed,u32 held,bool shift,u64 now)
+    {
+        const u32 directions[]={KEY_LEFT,KEY_RIGHT,KEY_UP,KEY_DOWN};
+
+        u32 pressedDirection=0;
+        u32 heldDirection=0;
+
+        for(u32 key:directions)
+        {
+            if(pressed&key)
+            {
+                pressedDirection=key;
+                break;
+            }
+        }
+
+        for(u32 key:directions)
+        {
+            if(held&key)
+            {
+                heldDirection=key;
+                break;
+            }
+        }
+
+        if(pressedDirection)
+        {
+            performNavigation(pressedDirection,shift);
+
+            navigationKey=pressedDirection;
+            navigationShift=shift;
+            nextNavigationRepeat=now+PHYSICAL_REPEAT_DELAY;
+
+            return;
+        }
+
+        if(!heldDirection)
+        {
+            navigationKey=0;
+            navigationShift=shift;
+            nextNavigationRepeat=0;
+            return;
+        }
+
+        // Si se cambia L mientras se mantiene la dirección, se reinicia
+        // el retardo para evitar una repetición inmediata inesperada.
+        if(navigationKey!=heldDirection || navigationShift!=shift)
+        {
+            navigationKey=heldDirection;
+            navigationShift=shift;
+            nextNavigationRepeat=now+PHYSICAL_REPEAT_DELAY;
+
+            return;
+        }
+
+        if(now>=nextNavigationRepeat)
+        {
+            performNavigation(heldDirection,shift);
+            nextNavigationRepeat=now+PHYSICAL_REPEAT_INTERVAL;
         }
     }
 }
 
 bool Editor_Init(C3D_RenderTarget* topTarget,C3D_RenderTarget* bottomTarget)
 {
-    if(!topTarget||!bottomTarget) return false;
+    if(!topTarget || !bottomTarget)
+        return false;
 
     topScreen=topTarget;
     bottomScreen=bottomTarget;
+
     textBuffer=C2D_TextBufNew(32768);
 
-    if(!textBuffer) return false;
+    if(!textBuffer)
+        return false;
 
     document.clear();
+
     cursorPosition=firstVisibleLine=0;
     preferredVerticalColumn=-1;
 
@@ -1989,12 +2666,15 @@ bool Editor_Init(C3D_RenderTarget* topTarget,C3D_RenderTarget* bottomTarget)
 
     capsLock=false;
     pendingDeadKey.clear();
+
     hasSelection=selectionMode=false;
     selectionAnchor=0;
+
     clipboard.text.clear();
     clipboard.styles.clear();
 
     boldEnabled=italicEnabled=underlineEnabled=false;
+
     showParagraphMarks=false;
     hudVisible=true;
 
@@ -2004,9 +2684,15 @@ bool Editor_Init(C3D_RenderTarget* topTarget,C3D_RenderTarget* bottomTarget)
     redoHistory.clear();
 
     lastLPress=nextRepeatTime=nextPhysicalRepeat=nextUndoRepeat=0;
+
+    nextNavigationRepeat=0;
+    navigationKey=0;
+    navigationShift=false;
+
     activeTouchKey=-1;
 
     buildVisualLines();
+
     return true;
 }
 
@@ -2018,24 +2704,29 @@ void Editor_Run()
 
         const u32 pressed=hidKeysDown();
         const u32 held=hidKeysHeld();
+
         const bool shift=(held&KEY_L)!=0;
         const bool alt=(held&KEY_ZL)!=0;
+
         const u64 now=osGetTime();
 
-        if(pressed&KEY_START) break;
+        if(pressed&KEY_START)
+            break;
 
         if(pressed&KEY_X)
             hudVisible=!hudVisible;
 
         if(pressed&KEY_L)
         {
-            if(lastLPress&&now-lastLPress<=CAPS_DOUBLE_PRESS_MS)
+            if(lastLPress && now-lastLPress<=CAPS_DOUBLE_PRESS_MS)
             {
                 capsLock=!capsLock;
                 lastLPress=0;
             }
             else
+            {
                 lastLPress=now;
+            }
         }
 
         if(pressed&KEY_SELECT)
@@ -2062,10 +2753,11 @@ void Editor_Run()
             {
                 copySelection();
 
-                if(shift||alt)
+                if(shift || alt)
                 {
                     pushUndo();
                     deleteSelection();
+
                     buildVisualLines();
                     updateScroll();
                     markModified();
@@ -2078,16 +2770,16 @@ void Editor_Run()
 
         if(pressed&KEY_B)
         {
-            if(shift||alt)
+            if(shift || alt)
                 redoAction();
             else
                 undoAction();
 
             nextUndoRepeat=now+PHYSICAL_REPEAT_DELAY;
         }
-        else if((held&KEY_B)&&now>=nextUndoRepeat)
+        else if((held&KEY_B) && now>=nextUndoRepeat)
         {
-            if(shift||alt)
+            if(shift || alt)
                 redoAction();
             else
                 undoAction();
@@ -2098,58 +2790,48 @@ void Editor_Run()
         if(!(held&KEY_B))
             nextUndoRepeat=0;
 
-        // D-pad: navegación convencional.
-        // L + izquierda/derecha: inicio/fin de línea.
-        // L + arriba/abajo: inicio/fin de párrafo.
-        if(pressed&KEY_LEFT)
-        {
-            if(shift) moveCursorToLineBoundary(false,selectionMode);
-            else moveCursorHorizontal(-1,selectionMode);
-        }
-
-        if(pressed&KEY_RIGHT)
-        {
-            if(shift) moveCursorToLineBoundary(true,selectionMode);
-            else moveCursorHorizontal(1,selectionMode);
-        }
-
-        if(pressed&KEY_UP)
-        {
-            if(shift) moveCursorToParagraphBoundary(false,selectionMode);
-            else moveCursorVertical(-1,selectionMode);
-        }
-
-        if(pressed&KEY_DOWN)
-        {
-            if(shift) moveCursorToParagraphBoundary(true,selectionMode);
-            else moveCursorVertical(1,selectionMode);
-        }
+        // Navegación:
+        // Izquierda/derecha: carácter.
+        // L + izquierda/derecha: palabra.
+        // Arriba/abajo: línea visual.
+        // L + arriba/abajo: inicio/fin del párrafo.
+        // Todas las direcciones admiten repetición al mantenerlas pulsadas.
+        processPhysicalNavigation(pressed,held,shift,now);
 
         const bool pageCombo=(pressed&KEY_R)&&(held&KEY_ZR);
 
         if(pressed&KEY_R)
         {
-            if(pageCombo) insertPageBreak();
-            else if(shift) insertParagraphBreak();
-            else insertLineBreak();
+            if(pageCombo)
+                insertPageBreak();
+            else if(shift)
+                insertParagraphBreak();
+            else
+                insertLineBreak();
         }
 
         const bool erasePressed=(pressed&KEY_ZR)!=0;
         const bool eraseHeld=(held&KEY_ZR)!=0;
 
-        if(erasePressed&&!pageCombo)
+        if(erasePressed && !pageCombo)
         {
             nextPhysicalRepeat=now+PHYSICAL_REPEAT_DELAY;
 
-            if(alt) deleteLine();
-            else if(shift) deleteWord();
-            else backspace();
+            if(alt)
+                deleteLine();
+            else if(shift)
+                deleteWord();
+            else
+                backspace();
         }
-        else if(eraseHeld&&!pageCombo&&now>=nextPhysicalRepeat)
+        else if(eraseHeld && !pageCombo && now>=nextPhysicalRepeat)
         {
-            if(alt) deleteLine();
-            else if(shift) deleteWord();
-            else backspace();
+            if(alt)
+                deleteLine();
+            else if(shift)
+                deleteWord();
+            else
+                backspace();
 
             nextPhysicalRepeat=now+PHYSICAL_REPEAT_INTERVAL;
         }
@@ -2169,8 +2851,10 @@ void Editor_Fini()
     }
 
     topScreen=bottomScreen=nullptr;
+
     document.clear();
     visualLines.clear();
+
     preferredVerticalColumn=-1;
 
     paragraphIndents.clear();
@@ -2183,5 +2867,9 @@ void Editor_Fini()
 
     clipboard.text.clear();
     clipboard.styles.clear();
+
     pendingDeadKey.clear();
+
+    navigationKey=0;
+    nextNavigationRepeat=0;
 }
