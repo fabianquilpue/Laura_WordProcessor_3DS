@@ -64,6 +64,8 @@ namespace
     C3D_RenderTarget* bottomScreen = nullptr;
     C2D_TextBuf textBuffer = nullptr;
 
+    bool ptmuAvailable = false;
+
     std::string document;
     std::size_t cursorPosition = 0, firstVisibleLine = 0;
     std::vector<std::pair<std::size_t,std::size_t>> visualLines;
@@ -1842,7 +1844,7 @@ namespace
             C2D_DrawText(
                 &t,C2D_WithColor,
                 r.x+(r.width-w)/2,r.y+(r.height-h)/2,
-                0.8f,scale,scale,COLOR_CARBON
+                0.4f,scale,scale,COLOR_CARBON
             );
         }
     }
@@ -2013,6 +2015,23 @@ namespace
         constexpr float PREVIEW_SCALE=0.82f;
         constexpr float MAX_WIDTH=300.0f;
 
+        std::size_t wordStart=cursorPosition;
+
+        while(wordStart>0)
+        {
+            const std::size_t prev=previousUTF8(document,wordStart);
+
+            if(isWhitespace(document.substr(prev,wordStart-prev)))
+                break;
+
+            wordStart=prev;
+        }
+
+        const std::size_t documentWordLength=
+            word.size()>=pendingDeadKey.size()
+                ?word.size()-pendingDeadKey.size()
+                :word.size();
+
         float naturalWidth=0.0f;
 
         for(std::size_t p=0;p<word.size();)
@@ -2049,12 +2068,17 @@ namespace
 
             TextStyle style{};
 
-            auto it=characterStyles.find(p);
+            if(p<documentWordLength)
+            {
+                auto it=characterStyles.find(wordStart+p);
 
-            if(it!=characterStyles.end())
-                style=it->second;
-            else if(p>=document.size())
+                if(it!=characterStyles.end())
+                    style=it->second;
+            }
+            else
+            {
                 style={boldEnabled,italicEnabled,underlineEnabled};
+            }
 
             if(style.italic)
                 drawItalicText(ch.c_str(),x,y,scale,COLOR_CARBON);
@@ -2082,20 +2106,6 @@ namespace
 
             x+=w;
             p=q;
-        }
-
-        // La tecla muerta pendiente también se muestra al final de la palabra.
-        if(!pendingDeadKey.empty())
-        {
-            const float w=measureTextWidthAtScale(
-                pendingDeadKey,scale
-            );
-
-            drawText(
-                pendingDeadKey.c_str(),x,y,scale,COLOR_CARBON
-            );
-
-            x+=w;
         }
     }
 
@@ -2167,11 +2177,30 @@ namespace
 
         u8 batteryLevel=0;
 
-        PTMU_GetBatteryLevel(&batteryLevel);
+        const bool batteryAvailable=
+            ptmuAvailable &&
+            R_SUCCEEDED(PTMU_GetBatteryLevel(&batteryLevel));
 
-        const int batteryPercent=std::min(
-            100,static_cast<int>(batteryLevel)*20
-        );
+        char batteryText[24];
+
+        if(batteryAvailable)
+        {
+            const int batteryPercent=std::min(
+                100,static_cast<int>(batteryLevel)*20
+            );
+
+            std::snprintf(
+                batteryText,sizeof(batteryText),
+                "Batería: %d%%",batteryPercent
+            );
+        }
+        else
+        {
+            std::snprintf(
+                batteryText,sizeof(batteryText),
+                "Batería: --"
+            );
+        }
 
         // Las barras se colocan por delante de la página.
         C2D_DrawRectSolid(
@@ -2212,13 +2241,6 @@ namespace
 
         C2D_DrawRectSolid(
             399,226,0.04f,1,14,COLOR_INFO_BORDE
-        );
-
-        char batteryText[24];
-
-        std::snprintf(
-            batteryText,sizeof(batteryText),
-            "Batería: %d%%",batteryPercent
         );
 
         // El texto tiene una profundidad menor que el fondo para garantizar
@@ -2643,10 +2665,20 @@ bool Editor_Init(C3D_RenderTarget* topTarget,C3D_RenderTarget* bottomTarget)
     topScreen=topTarget;
     bottomScreen=bottomTarget;
 
+    ptmuAvailable=R_SUCCEEDED(ptmuInit());
+
     textBuffer=C2D_TextBufNew(32768);
 
     if(!textBuffer)
+    {
+        if(ptmuAvailable)
+        {
+            ptmuExit();
+            ptmuAvailable=false;
+        }
+
         return false;
+    }
 
     document.clear();
 
@@ -2848,6 +2880,12 @@ void Editor_Fini()
     {
         C2D_TextBufDelete(textBuffer);
         textBuffer=nullptr;
+    }
+
+    if(ptmuAvailable)
+    {
+        ptmuExit();
+        ptmuAvailable=false;
     }
 
     topScreen=bottomScreen=nullptr;
