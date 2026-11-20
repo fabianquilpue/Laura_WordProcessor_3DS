@@ -54,7 +54,6 @@ namespace
     constexpr u32 COLOR_TECLA_LATERAL = C2D_Color32(220,219,211,255);
     constexpr u32 COLOR_SECUNDARIO = C2D_Color32(130,130,120,255);
 
-    // Calipso más saturado para que la selección destaque sobre el papel.
     constexpr u32 COLOR_SELECCION = C2D_Color32(65,190,185,255);
 
     constexpr u32 COLOR_BLANCO = C2D_Color32(255,255,255,255);
@@ -63,8 +62,6 @@ namespace
     C3D_RenderTarget* topScreen = nullptr;
     C3D_RenderTarget* bottomScreen = nullptr;
     C2D_TextBuf textBuffer = nullptr;
-
-    bool ptmuAvailable = false;
 
     std::string document;
     std::size_t cursorPosition = 0, firstVisibleLine = 0;
@@ -120,7 +117,6 @@ namespace
     u64 lastLPress = 0, nextRepeatTime = 0;
     u64 nextPhysicalRepeat = 0, nextUndoRepeat = 0;
 
-    // Estado de repetición de la cruceta.
     u64 nextNavigationRepeat = 0;
     u32 navigationKey = 0;
     bool navigationShift = false;
@@ -140,9 +136,6 @@ namespace
         float x,y,width,height;
     };
 
-    // Fila numérica:
-    // L:  * @ · $ % & / < > =
-    // ZL: | + # ª   ¬ \   ^ º
     const std::array<std::array<KeyDefinition,10>,5> keyboard = {{
         {{{"1","*","|",false},{"2","@","+",false},{"3","·","#",false},
           {"4","$","ª",false},{"5","%","",false},{"6","&","¬",false},
@@ -1383,8 +1376,6 @@ namespace
         return {};
     }
 
-    // El parámetro de profundidad permite colocar texto delante de los
-    // fondos de las barras de información y delante del resaltado.
     void drawText(const char* s,float x,float y,float scale,u32 color,
                   float depth=0.45f)
     {
@@ -1452,7 +1443,6 @@ namespace
 
             if(ch=="\t")
             {
-                // Una tabulación equivale a cuatro espacios.
                 width+=spaceWidth*4.0f;
             }
             else if(ch!="\n" && ch!="\v" && ch!="\f")
@@ -1496,12 +1486,10 @@ namespace
 
         if(end<=x+2.0f) return;
 
-        // Línea horizontal de la flecha.
         C2D_DrawRectSolid(
             x,cy,0.30f,end-x,1.1f,COLOR_MUSGO
         );
 
-        // Punta de flecha.
         C2D_DrawRectSolid(
             end-3.0f,cy-2.0f,0.30f,1.1f,5.0f,COLOR_MUSGO
         );
@@ -1740,8 +1728,6 @@ namespace
                     const std::string before=document.substr(a,sa-a);
                     const std::string selected=document.substr(sa,sb-sa);
 
-                    // La página está a profundidad 0.5. El resaltado queda
-                    // delante de ella y el texto se dibuja aún más adelante.
                     C2D_DrawRectSolid(
                         x+measureTextWidth(before),y,0.47f,
                         std::max(1.0f,measureTextWidth(selected)),11.0f,
@@ -1841,10 +1827,11 @@ namespace
 
             C2D_TextGetDimensions(&t,scale,scale,&w,&h);
 
+            // Mantener las etiquetas delante de las caras y bordes.
             C2D_DrawText(
                 &t,C2D_WithColor,
                 r.x+(r.width-w)/2,r.y+(r.height-h)/2,
-                0.4f,scale,scale,COLOR_CARBON
+                0.45f,scale,scale,COLOR_CARBON
             );
         }
     }
@@ -1945,7 +1932,6 @@ namespace
                    pendingDeadKey=="`";
         }
 
-        // La tecla muerta ^ corresponde ahora a ZL + 9.
         if(key==48)
             return pendingDeadKey=="^";
 
@@ -2006,8 +1992,6 @@ namespace
         );
     }
 
-    // Previsualización de la palabra actual: calcula el ancho carácter a
-    // carácter y aplica los estilos guardados para cada posición del texto.
     void drawFormattedPreview(const std::string& word,float centerX,float y)
     {
         if(word.empty()) return;
@@ -2070,7 +2054,8 @@ namespace
 
             if(p<documentWordLength)
             {
-                auto it=characterStyles.find(wordStart+p);
+                const std::size_t absolutePosition=wordStart+p;
+                auto it=characterStyles.find(absolutePosition);
 
                 if(it!=characterStyles.end())
                     style=it->second;
@@ -2176,10 +2161,8 @@ namespace
         );
 
         u8 batteryLevel=0;
-
-        const bool batteryAvailable=
-            ptmuAvailable &&
-            R_SUCCEEDED(PTMU_GetBatteryLevel(&batteryLevel));
+        const Result batteryResult=PTMU_GetBatteryLevel(&batteryLevel);
+        const bool batteryAvailable=R_SUCCEEDED(batteryResult);
 
         char batteryText[24];
 
@@ -2202,7 +2185,6 @@ namespace
             );
         }
 
-        // Las barras se colocan por delante de la página.
         C2D_DrawRectSolid(
             0,0,0.05f,400,14,COLOR_BLANCO
         );
@@ -2243,8 +2225,6 @@ namespace
             399,226,0.04f,1,14,COLOR_INFO_BORDE
         );
 
-        // El texto tiene una profundidad menor que el fondo para garantizar
-        // que permanezca visible sobre las barras.
         drawText(
             batteryText,5,1,0.32f,COLOR_CARBON,0.0f
         );
@@ -2470,14 +2450,12 @@ namespace
 
         const KeyDefinition& k=keyboard[r][c];
 
-        // Coma: L + coma = punto y coma.
         if(key==37 && shift)
         {
             insertCharacter(";");
             return;
         }
 
-        // Punto: L + punto = dos puntos; ZL + punto = puntos suspensivos.
         if(key==38 && alt)
         {
             insertCharacter("…");
@@ -2490,14 +2468,12 @@ namespace
             return;
         }
 
-        // Teclas muertas de acento.
         if(r==3 && c==9)
         {
             activateDeadKey(alt?"`":(shift?"¨":"´"));
             return;
         }
 
-        // ZL + 9 activa el circunflejo.
         if(r==0 && c==8 && alt)
         {
             activateDeadKey("^");
@@ -2638,8 +2614,6 @@ namespace
             return;
         }
 
-        // Si se cambia L mientras se mantiene la dirección, se reinicia
-        // el retardo para evitar una repetición inmediata inesperada.
         if(navigationKey!=heldDirection || navigationShift!=shift)
         {
             navigationKey=heldDirection;
@@ -2665,20 +2639,10 @@ bool Editor_Init(C3D_RenderTarget* topTarget,C3D_RenderTarget* bottomTarget)
     topScreen=topTarget;
     bottomScreen=bottomTarget;
 
-    ptmuAvailable=R_SUCCEEDED(ptmuInit());
-
     textBuffer=C2D_TextBufNew(32768);
 
     if(!textBuffer)
-    {
-        if(ptmuAvailable)
-        {
-            ptmuExit();
-            ptmuAvailable=false;
-        }
-
         return false;
-    }
 
     document.clear();
 
@@ -2822,12 +2786,6 @@ void Editor_Run()
         if(!(held&KEY_B))
             nextUndoRepeat=0;
 
-        // Navegación:
-        // Izquierda/derecha: carácter.
-        // L + izquierda/derecha: palabra.
-        // Arriba/abajo: línea visual.
-        // L + arriba/abajo: inicio/fin del párrafo.
-        // Todas las direcciones admiten repetición al mantenerlas pulsadas.
         processPhysicalNavigation(pressed,held,shift,now);
 
         const bool pageCombo=(pressed&KEY_R)&&(held&KEY_ZR);
@@ -2880,12 +2838,6 @@ void Editor_Fini()
     {
         C2D_TextBufDelete(textBuffer);
         textBuffer=nullptr;
-    }
-
-    if(ptmuAvailable)
-    {
-        ptmuExit();
-        ptmuAvailable=false;
     }
 
     topScreen=bottomScreen=nullptr;
