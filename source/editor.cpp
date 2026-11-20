@@ -23,6 +23,7 @@ namespace
     constexpr float TEXT_SCALE = 0.48f, LINE_HEIGHT = 12.5f;
     constexpr float INDENT_WIDTH = 12.0f;
     constexpr float TEXT_WIDTH = 310.0f;
+    constexpr float TEXT_BOTTOM = 213.0f;
     constexpr int MAX_LINE_CHARACTERS = 43, VISIBLE_LINES = 15;
     constexpr int MAX_INDENT_LEVEL = 8;
     constexpr int PAGE_LINES = 55;
@@ -53,7 +54,6 @@ namespace
     constexpr u32 COLOR_TECLA_LATERAL = C2D_Color32(220,219,211,255);
     constexpr u32 COLOR_SECUNDARIO = C2D_Color32(130,130,120,255);
 
-    // Resaltado calipso pastel para el texto seleccionado.
     constexpr u32 COLOR_SELECCION = C2D_Color32(174,220,218,255);
 
     constexpr u32 COLOR_BLANCO = C2D_Color32(255,255,255,255);
@@ -67,7 +67,6 @@ namespace
     std::size_t cursorPosition = 0, firstVisibleLine = 0;
     std::vector<std::pair<std::size_t,std::size_t>> visualLines;
 
-    // Conserva la columna horizontal al desplazarse verticalmente.
     int preferredVerticalColumn = -1;
 
     std::map<std::size_t,int> paragraphIndents;
@@ -299,19 +298,42 @@ namespace
         return y;
     }
 
+    // Ajusta el desplazamiento según la altura real de las líneas.
+    // Así también se consideran los párrafos con interlineado ampliado.
     void updateScroll()
     {
+        if(visualLines.empty())
+            buildVisualLines();
+
+        if(visualLines.empty())
+        {
+            firstVisibleLine=0;
+            return;
+        }
+
         const std::size_t line=findCursorLine();
 
         if(line<firstVisibleLine)
             firstVisibleLine=line;
-        else if(line>=firstVisibleLine+VISIBLE_LINES)
-            firstVisibleLine=line-VISIBLE_LINES+1;
 
-        const std::size_t max=visualLines.size()>VISIBLE_LINES
-            ?visualLines.size()-VISIBLE_LINES:0;
+        firstVisibleLine=std::min(firstVisibleLine,line);
 
-        firstVisibleLine=std::min(firstVisibleLine,max);
+        while(firstVisibleLine<line)
+        {
+            float y=TEXT_Y;
+
+            for(std::size_t i=firstVisibleLine;i<line;++i)
+                y+=LINE_HEIGHT*getParagraphSpacing(visualLines[i].first);
+
+            if(y+11.0f<=TEXT_BOTTOM)
+                break;
+
+            ++firstVisibleLine;
+        }
+
+        // Nunca permitir que el índice de desplazamiento exceda el documento.
+        if(firstVisibleLine>=visualLines.size())
+            firstVisibleLine=visualLines.size()-1;
     }
 
     void clearSelection()
@@ -1129,6 +1151,23 @@ namespace
         markModified();
     }
 
+    // El estado visual de la barra refleja el formato del carácter bajo
+    // el cursor. Al final del documento se muestra el formato de escritura.
+    TextStyle getCursorStyle()
+    {
+        if(cursorPosition<document.size())
+        {
+            auto it=characterStyles.find(cursorPosition);
+            if(it!=characterStyles.end())
+                return it->second;
+        }
+
+        if(cursorPosition>=document.size())
+            return {boldEnabled,italicEnabled,underlineEnabled};
+
+        return {};
+    }
+
     void drawText(const char* s,float x,float y,float scale,u32 color)
     {
         C2D_Text t;
@@ -1342,6 +1381,11 @@ namespace
             const std::size_t a=visualLines[li].first;
             const std::size_t b=visualLines[li].second;
             const float y=getLineY(li);
+
+            // No dibujar texto bajo el margen inferior de la página/HUD.
+            if(y+11.0f>TEXT_BOTTOM)
+                break;
+
             const std::string line=document.substr(a,b-a);
             const float lineWidth=measureTextWidth(line);
             const float x=getAlignedLineX(a,lineWidth);
@@ -1384,8 +1428,11 @@ namespace
             const float x=getCursorX(line);
             const float y=getLineY(line);
 
-            if((osGetTime()/CURSOR_BLINK_INTERVAL)%2==0)
+            if(y+10.0f<=TEXT_BOTTOM &&
+               (osGetTime()/CURSOR_BLINK_INTERVAL)%2==0)
+            {
                 C2D_DrawRectSolid(x,y,0.7f,1.5f,10,COLOR_MUSGO);
+            }
         }
     }
 
@@ -1483,13 +1530,15 @@ namespace
 
     void drawToolbar()
     {
+        const TextStyle cursorStyle=getCursorStyle();
+
         for(int i=0;i<7;++i)
         {
             const float x=4.0f+i*45.0f;
             const bool active=
-                i==0?boldEnabled:
-                i==1?italicEnabled:
-                i==2?underlineEnabled:
+                i==0?cursorStyle.bold:
+                i==1?cursorStyle.italic:
+                i==2?cursorStyle.underline:
                 i==6?showParagraphMarks:false;
 
             char spacing[8];
@@ -1560,11 +1609,14 @@ namespace
             }
         }
 
+        // La tecla de retroceso indica la operación asociada al modificador.
+        const char* deleteLabel=alt?"LINE":(shift?"WORD":"DEL");
+
         drawKey(
             {KEY_SPECIAL_X,KEY_START_Y,KEY_SPECIAL_WIDTH,KEY_HEIGHT},
-            "DEL",
+            deleteLabel,
             activeTouchKey==103,
-            0.34f
+            0.30f
         );
 
         drawEnterKey(shift,alt);
@@ -1604,9 +1656,10 @@ namespace
         const float scale=std::min(0.82f,300.0f/std::max(1.0f,w)*0.82f);
         C2D_TextGetDimensions(&t,scale,scale,&w,&h);
 
+        // La previsualización de la palabra se muestra siempre en negro.
         C2D_DrawText(
             &t,C2D_WithColor,(320.0f-w)*0.5f,41.0f,
-            0.8f,scale,scale,COLOR_MUSGO
+            0.8f,scale,scale,COLOR_CARBON
         );
     }
 
@@ -1663,7 +1716,7 @@ namespace
         C2D_DrawRectSolid(0,226,0.95f,1,14,COLOR_INFO_BORDE);
         C2D_DrawRectSolid(399,226,0.95f,1,14,COLOR_INFO_BORDE);
 
-        char batteryText[16];
+        char batteryText[24];
         std::snprintf(
             batteryText,sizeof(batteryText),"Batería: %d%%",batteryPercent
         );
@@ -1674,7 +1727,6 @@ namespace
         const std::size_t words=countWords();
         const std::size_t characters=countCharacters(document,0,document.size());
 
-        // Se cuenta al menos una página, incluso con el documento vacío.
         const std::size_t pages=std::max<std::size_t>(
             1,(visualLines.size()+PAGE_LINES-1)/PAGE_LINES
         );
@@ -1720,11 +1772,16 @@ namespace
         C2D_SceneBegin(topScreen);
         drawPage();
 
-        // Se reserva el búfer para el HUD antes de dibujar el documento.
-        if(hudVisible)
-            drawInfoBars();
+        // Se construyen las líneas antes de calcular el número de páginas.
+        buildVisualLines();
+        updateScroll();
 
         drawDocument();
+
+        // Se dibujan las barras al final para que queden por encima de la página
+        // y del documento, y sus textos no sean tapados por otros elementos.
+        if(hudVisible)
+            drawInfoBars();
 
         C2D_TargetClear(bottomScreen,COLOR_CREMA);
         C2D_SceneBegin(bottomScreen);
@@ -1911,7 +1968,7 @@ bool Editor_Init(C3D_RenderTarget* topTarget,C3D_RenderTarget* bottomTarget)
 
     topScreen=topTarget;
     bottomScreen=bottomTarget;
-    textBuffer=C2D_TextBufNew(16384);
+    textBuffer=C2D_TextBufNew(32768);
 
     if(!textBuffer) return false;
 
@@ -2042,8 +2099,8 @@ void Editor_Run()
             nextUndoRepeat=0;
 
         // D-pad: navegación convencional.
-        // Sin L: izquierda/derecha recorren caracteres y arriba/abajo líneas.
-        // Con L: inicio/fin de línea y de párrafo, respectivamente.
+        // L + izquierda/derecha: inicio/fin de línea.
+        // L + arriba/abajo: inicio/fin de párrafo.
         if(pressed&KEY_LEFT)
         {
             if(shift) moveCursorToLineBoundary(false,selectionMode);
