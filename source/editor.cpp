@@ -25,6 +25,7 @@ namespace
     constexpr float TEXT_WIDTH = 310.0f;
     constexpr int MAX_LINE_CHARACTERS = 43, VISIBLE_LINES = 15;
     constexpr int MAX_INDENT_LEVEL = 8;
+    constexpr int PAGE_LINES = 55;
 
     constexpr float KEY_WIDTH = 25.0f, KEY_HEIGHT = 18.0f;
     constexpr float KEY_GAP = 0.0f, KEY_START_X = 22.0f;
@@ -51,7 +52,10 @@ namespace
     constexpr u32 COLOR_TECLA_SOMBRA = C2D_Color32(185,184,176,255);
     constexpr u32 COLOR_TECLA_LATERAL = C2D_Color32(220,219,211,255);
     constexpr u32 COLOR_SECUNDARIO = C2D_Color32(130,130,120,255);
-    constexpr u32 COLOR_SELECCION = C2D_Color32(190,211,195,255);
+
+    // Resaltado calipso pastel para el texto seleccionado.
+    constexpr u32 COLOR_SELECCION = C2D_Color32(174,220,218,255);
+
     constexpr u32 COLOR_BLANCO = C2D_Color32(255,255,255,255);
     constexpr u32 COLOR_INFO_BORDE = C2D_Color32(125,125,118,255);
 
@@ -62,6 +66,9 @@ namespace
     std::string document;
     std::size_t cursorPosition = 0, firstVisibleLine = 0;
     std::vector<std::pair<std::size_t,std::size_t>> visualLines;
+
+    // Conserva la columna horizontal al desplazarse verticalmente.
+    int preferredVerticalColumn = -1;
 
     std::map<std::size_t,int> paragraphIndents;
     std::map<std::size_t,int> paragraphAlignments;
@@ -376,6 +383,7 @@ namespace
 
         cursorPosition=a;
         clearSelection();
+        preferredVerticalColumn=-1;
     }
 
     void restoreSnapshot(const EditorSnapshot& s)
@@ -393,6 +401,7 @@ namespace
         italicEnabled=s.italic;
         underlineEnabled=s.underline;
         pendingDeadKey.clear();
+        preferredVerticalColumn=-1;
         buildVisualLines();
         updateScroll();
         markModified();
@@ -489,6 +498,7 @@ namespace
         insertDocumentText(cursorPosition,value);
         cursorPosition+=value.size();
         clearSelection();
+        preferredVerticalColumn=-1;
         buildVisualLines();
         updateScroll();
         markModified();
@@ -529,6 +539,7 @@ namespace
 
         cursorPosition+=clipboard.text.size();
         clearSelection();
+        preferredVerticalColumn=-1;
         buildVisualLines();
         updateScroll();
         markModified();
@@ -638,6 +649,7 @@ namespace
 
         cursorPosition=p;
         clearSelection();
+        preferredVerticalColumn=-1;
         buildVisualLines();
         updateScroll();
         markModified();
@@ -748,6 +760,7 @@ namespace
             clearSelection();
         }
 
+        preferredVerticalColumn=-1;
         buildVisualLines();
         updateScroll();
         markModified();
@@ -816,6 +829,7 @@ namespace
             clearSelection();
         }
 
+        preferredVerticalColumn=-1;
         buildVisualLines();
         updateScroll();
         markModified();
@@ -863,6 +877,61 @@ namespace
         else if(dir>0)
             cursorPosition=nextUTF8(document,cursorPosition);
 
+        preferredVerticalColumn=-1;
+        finishCursorMovement();
+    }
+
+    int getCursorColumn(std::size_t line)
+    {
+        if(line>=visualLines.size()) return 0;
+
+        const std::size_t start=visualLines[line].first;
+        const std::size_t end=std::min(cursorPosition,visualLines[line].second);
+
+        return static_cast<int>(countCharacters(document,start,end));
+    }
+
+    std::size_t getPositionAtColumn(std::size_t line,int column)
+    {
+        if(line>=visualLines.size()) return document.size();
+
+        std::size_t p=visualLines[line].first;
+        const std::size_t end=visualLines[line].second;
+
+        while(column>0&&p<end)
+        {
+            p=nextUTF8(document,p);
+            --column;
+        }
+
+        return p;
+    }
+
+    void moveCursorVertical(int direction,bool selecting)
+    {
+        buildVisualLines();
+
+        if(visualLines.empty()) return;
+
+        const std::size_t currentLine=findCursorLine();
+
+        if(preferredVerticalColumn<0)
+            preferredVerticalColumn=getCursorColumn(currentLine);
+
+        prepareCursorMovement(selecting);
+
+        std::size_t targetLine=currentLine;
+
+        if(direction<0)
+        {
+            if(targetLine>0) --targetLine;
+        }
+        else
+        {
+            if(targetLine+1<visualLines.size()) ++targetLine;
+        }
+
+        cursorPosition=getPositionAtColumn(targetLine,preferredVerticalColumn);
         finishCursorMovement();
     }
 
@@ -876,6 +945,7 @@ namespace
         if(!visualLines.empty())
             cursorPosition=toEnd?visualLines[line].second:visualLines[line].first;
 
+        preferredVerticalColumn=-1;
         finishCursorMovement();
     }
 
@@ -887,6 +957,7 @@ namespace
             ?getParagraphEnd(cursorPosition)
             :getParagraphStart(cursorPosition);
 
+        preferredVerticalColumn=-1;
         finishCursorMovement();
     }
 
@@ -927,6 +998,7 @@ namespace
             }
         }
 
+        preferredVerticalColumn=-1;
         finishCursorMovement();
     }
 
@@ -1151,7 +1223,6 @@ namespace
 
         if(separator=='\n')
         {
-            // Marca de párrafo: pilcrow (¶).
             const float t=1.25f;
 
             C2D_DrawRectSolid(x+1.0f,cy-5.0f,0.8f,t,11.0f,COLOR_MUSGO);
@@ -1162,7 +1233,6 @@ namespace
         }
         else if(separator=='\v')
         {
-            // Salto manual de línea: flecha de retorno (↵).
             const float t=1.3f;
 
             C2D_DrawRectSolid(x+1.0f,cy-4.0f,0.8f,9.0f,t,COLOR_MUSGO);
@@ -1174,7 +1244,6 @@ namespace
         }
         else if(separator=='\f')
         {
-            // Salto de página: línea discontinua con rótulo.
             const float lineY=cy+1.0f;
             const float labelWidth=68.0f;
             const float labelX=TEXT_X+(TEXT_WIDTH-labelWidth)*0.5f;
@@ -1301,7 +1370,6 @@ namespace
             if(showParagraphMarks&&b<document.size()&&isSeparator(document[b]))
                 drawParagraphMark(document[b],x+lineWidth+2.0f,y);
 
-            // Un párrafo vacío al final también debe mostrar su marca.
             if(showParagraphMarks&&a==b&&a==document.size()&&
                !document.empty()&&document.back()=='\n')
             {
@@ -1333,8 +1401,6 @@ namespace
 
     void drawKey(const KeyRect&r,const char*label,bool active=false,float scale=0.48f)
     {
-        // Cuerpo exterior y sombra inferior: las teclas quedan contiguas,
-        // compartiendo únicamente la línea divisoria de sus bordes.
         C2D_DrawRectSolid(
             r.x,r.y,0.5f,r.width,r.height,COLOR_TECLA_BORDE
         );
@@ -1345,7 +1411,6 @@ namespace
             active?COLOR_TECLA_ACTIVA:COLOR_TECLA
         );
 
-        // Bisel superior e izquierdo.
         C2D_DrawRectSolid(
             r.x+1.0f,r.y+1.0f,0.7f,
             r.width-2.0f,1.0f,COLOR_TECLA_SUPERIOR
@@ -1356,7 +1421,6 @@ namespace
             1.0f,r.height-2.0f,COLOR_TECLA_SUPERIOR
         );
 
-        // Bisel inferior y derecho.
         C2D_DrawRectSolid(
             r.x+1.0f,r.y+r.height-2.0f,0.75f,
             r.width-2.0f,1.0f,COLOR_TECLA_SOMBRA
@@ -1476,9 +1540,7 @@ namespace
             KEY_HEIGHT*2.0f
         };
 
-        drawKey(
-            r,label,activeTouchKey==104,0.34f
-        );
+        drawKey(r,label,activeTouchKey==104,0.34f);
     }
 
     void drawKeyboard(bool shift,bool alt)
@@ -1577,25 +1639,17 @@ namespace
     {
         const std::time_t now=std::time(nullptr);
         std::tm localTime{};
-        std::tm modifiedTime{};
 
         std::tm* current=std::localtime(&now);
         if(current) localTime=*current;
 
-        std::tm* modified=std::localtime(&lastModified);
-        if(modified) modifiedTime=*modified;
-
         char clock[16]="--:--";
-        char modifiedDate[32]="--/--/-- --:--";
-
         std::strftime(clock,sizeof(clock),"%H:%M",&localTime);
-        std::strftime(modifiedDate,sizeof(modifiedDate),"%d/%m/%y %H:%M",&modifiedTime);
 
         u8 batteryLevel=0;
         PTMU_GetBatteryLevel(&batteryLevel);
         const int batteryPercent=std::min(100,static_cast<int>(batteryLevel)*20);
 
-        // Barras blancas con contorno visible.
         C2D_DrawRectSolid(0,0,0.9f,400,14,COLOR_BLANCO);
         C2D_DrawRectSolid(0,226,0.9f,400,14,COLOR_BLANCO);
 
@@ -1611,18 +1665,19 @@ namespace
 
         char batteryText[16];
         std::snprintf(
-            batteryText,sizeof(batteryText),"Bat. %d%%",batteryPercent
+            batteryText,sizeof(batteryText),"Batería: %d%%",batteryPercent
         );
 
         drawText(batteryText,5,2,0.32f,COLOR_CARBON);
-        drawText("Sin título",65,2,0.32f,COLOR_CARBON);
-        drawText(modifiedDate,155,2,0.29f,COLOR_SECUNDARIO);
         drawText(clock,365,2,0.32f,COLOR_CARBON);
 
         const std::size_t words=countWords();
         const std::size_t characters=countCharacters(document,0,document.size());
-        const std::size_t pages=document.empty()?0:
-            std::max<std::size_t>(1,(visualLines.size()+54)/55);
+
+        // Se cuenta al menos una página, incluso con el documento vacío.
+        const std::size_t pages=std::max<std::size_t>(
+            1,(visualLines.size()+PAGE_LINES-1)/PAGE_LINES
+        );
 
         char wordText[32];
         char characterText[32];
@@ -1665,8 +1720,7 @@ namespace
         C2D_SceneBegin(topScreen);
         drawPage();
 
-        // El HUD se dibuja antes del documento para reservarle espacio
-        // en el búfer de texto y evitar que quede vacío.
+        // Se reserva el búfer para el HUD antes de dibujar el documento.
         if(hudVisible)
             drawInfoBars();
 
@@ -1765,10 +1819,6 @@ namespace
         const int r=key/10,c=key%10;
         const KeyDefinition&k=keyboard[r][c];
 
-        // Combinaciones de puntuación:
-        // L + coma = punto y coma.
-        // L + punto = dos puntos.
-        // ZL + punto = puntos suspensivos.
         if(key==37&&shift)
         {
             insertCharacter(";");
@@ -1867,6 +1917,7 @@ bool Editor_Init(C3D_RenderTarget* topTarget,C3D_RenderTarget* bottomTarget)
 
     document.clear();
     cursorPosition=firstVisibleLine=0;
+    preferredVerticalColumn=-1;
 
     paragraphIndents.clear();
     paragraphIndents[0]=0;
@@ -1990,28 +2041,31 @@ void Editor_Run()
         if(!(held&KEY_B))
             nextUndoRepeat=0;
 
+        // D-pad: navegación convencional.
+        // Sin L: izquierda/derecha recorren caracteres y arriba/abajo líneas.
+        // Con L: inicio/fin de línea y de párrafo, respectivamente.
         if(pressed&KEY_LEFT)
         {
-            if(shift) moveCursorWord(-1,selectionMode);
+            if(shift) moveCursorToLineBoundary(false,selectionMode);
             else moveCursorHorizontal(-1,selectionMode);
         }
 
         if(pressed&KEY_RIGHT)
         {
-            if(shift) moveCursorWord(1,selectionMode);
+            if(shift) moveCursorToLineBoundary(true,selectionMode);
             else moveCursorHorizontal(1,selectionMode);
         }
 
         if(pressed&KEY_UP)
         {
             if(shift) moveCursorToParagraphBoundary(false,selectionMode);
-            else moveCursorToLineBoundary(false,selectionMode);
+            else moveCursorVertical(-1,selectionMode);
         }
 
         if(pressed&KEY_DOWN)
         {
             if(shift) moveCursorToParagraphBoundary(true,selectionMode);
-            else moveCursorToLineBoundary(true,selectionMode);
+            else moveCursorVertical(1,selectionMode);
         }
 
         const bool pageCombo=(pressed&KEY_R)&&(held&KEY_ZR);
@@ -2060,6 +2114,7 @@ void Editor_Fini()
     topScreen=bottomScreen=nullptr;
     document.clear();
     visualLines.clear();
+    preferredVerticalColumn=-1;
 
     paragraphIndents.clear();
     paragraphAlignments.clear();
